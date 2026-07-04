@@ -761,7 +761,7 @@ private struct ThreadConversationView: View {
 
             if showRunsConfig {
                 Divider()
-                RunsConfigurationPanel(runs: runs)
+                RunsConfigurationPanel(runs: runs, messages: messages)
                     .frame(width: 320)
                     .transition(.move(edge: .trailing))
             }
@@ -1277,9 +1277,17 @@ private struct SimulationProgressBubble: View {
 
 private struct RunsConfigurationPanel: View {
     let runs: [SimulationRun]
+    let messages: [ChatMessage]
+    @State private var selectedMode: RunSidePanelMode = .evidence
+    @State private var compareLeftRunId: String?
+    @State private var compareRightRunId: String?
 
     private var simulationRuns: [SimulationRun] {
         runs.filter { !$0.configuration.isEmpty }
+    }
+
+    private var completedSimulationRuns: [SimulationRun] {
+        simulationRuns.filter { $0.status == .completed }
     }
 
     private var artifactCount: Int {
@@ -1289,7 +1297,7 @@ private struct RunsConfigurationPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Run Evidence")
+                Text(selectedMode.title)
                     .font(.headline)
                 Spacer()
                 Text("\(simulationRuns.count) runs")
@@ -1306,6 +1314,16 @@ private struct RunsConfigurationPanel: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+
+            Picker("Panel", selection: $selectedMode) {
+                ForEach(RunSidePanelMode.allCases) { mode in
+                    Label(mode.title, systemImage: mode.iconName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -1326,7 +1344,7 @@ private struct RunsConfigurationPanel: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
-            } else {
+            } else if selectedMode == .evidence {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(simulationRuns) { run in
@@ -1335,9 +1353,484 @@ private struct RunsConfigurationPanel: View {
                     }
                     .padding(12)
                 }
+            } else {
+                RunComparePanel(
+                    completedRuns: completedSimulationRuns,
+                    messages: messages,
+                    leftRunId: $compareLeftRunId,
+                    rightRunId: $compareRightRunId
+                )
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private enum RunSidePanelMode: String, CaseIterable, Identifiable {
+    case evidence
+    case compare
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .evidence: return "Run Evidence"
+        case .compare: return "Run Compare"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .evidence: return "list.bullet.rectangle"
+        case .compare: return "arrow.left.arrow.right"
+        }
+    }
+}
+
+private struct RunComparePanel: View {
+    let completedRuns: [SimulationRun]
+    let messages: [ChatMessage]
+    @Binding var leftRunId: String?
+    @Binding var rightRunId: String?
+
+    private var leftRun: SimulationRun? {
+        resolvedRun(for: leftRunId) ?? completedRuns.first
+    }
+
+    private var rightRun: SimulationRun? {
+        resolvedRun(for: rightRunId) ?? completedRuns.dropFirst().first ?? completedRuns.first
+    }
+
+    private var comparison: RunComparison? {
+        guard let leftRun, let rightRun else { return nil }
+        return RunComparison(left: leftRun, right: rightRun, messages: messages)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if completedRuns.count < 2 {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tertiary)
+                    Text("Need two completed runs")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("Run Compare is available when a thread has at least two completed simulation runs.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    RunComparePicker(
+                        title: "A",
+                        runs: completedRuns,
+                        selectedRunId: Binding(
+                            get: { leftRun?.id },
+                            set: { leftRunId = $0 }
+                        )
+                    )
+                    RunComparePicker(
+                        title: "B",
+                        runs: completedRuns,
+                        selectedRunId: Binding(
+                            get: { rightRun?.id },
+                            set: { rightRunId = $0 }
+                        )
+                    )
+                }
+                .padding(12)
+
+                Divider()
+
+                if let comparison {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            RunCompareSummaryCard(comparison: comparison)
+                            RunCompareSection(title: "Identity", rows: comparison.identityRows)
+                            RunCompareSection(title: "Configuration", rows: comparison.configurationRows)
+                            RunCompareSection(title: "Summary Metrics", rows: comparison.summaryMetricRows)
+                            RunCompareSection(title: "Artifacts", rows: comparison.artifactRows)
+                            RunCompareSection(title: "Charts", rows: comparison.chartRows)
+                            RunCompareSection(title: "Exact Rerun", rows: comparison.byteMatchRows)
+                        }
+                        .padding(12)
+                    }
+                }
+            }
+        }
+        .onAppear(perform: seedSelections)
+        .onChange(of: completedRuns.map(\.id)) {
+            seedSelections()
+        }
+    }
+
+    private func resolvedRun(for id: String?) -> SimulationRun? {
+        guard let id else { return nil }
+        return completedRuns.first { $0.id == id }
+    }
+
+    private func seedSelections() {
+        guard completedRuns.count >= 2 else { return }
+
+        if resolvedRun(for: leftRunId) == nil {
+            leftRunId = completedRuns.first?.id
+        }
+
+        if resolvedRun(for: rightRunId) == nil || rightRunId == leftRunId {
+            rightRunId = completedRuns.first { $0.id != leftRunId }?.id
+        }
+    }
+}
+
+private struct RunComparePicker: View {
+    let title: String
+    let runs: [SimulationRun]
+    @Binding var selectedRunId: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(.caption, design: .monospaced))
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Picker(title, selection: $selectedRunId) {
+                ForEach(runs) { run in
+                    Text(run.title)
+                        .tag(Optional(run.id))
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+        }
+    }
+}
+
+private struct RunCompareSummaryCard: View {
+    let comparison: RunComparison
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                CompareRunBadge(label: "A", run: comparison.left)
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 3)
+                CompareRunBadge(label: "B", run: comparison.right)
+            }
+
+            HStack(spacing: 6) {
+                MetricChip(label: "Metrics", value: "\(comparison.summaryMetricRows.count)")
+                MetricChip(label: "Charts", value: "\(comparison.leftCharts.count)/\(comparison.rightCharts.count)")
+                MetricChip(label: "Artifacts", value: "\(comparison.leftArtifacts.count)/\(comparison.rightArtifacts.count)")
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct CompareRunBadge: View {
+    let label: String
+    let run: SimulationRun
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(.caption2, design: .monospaced))
+                .fontWeight(.bold)
+                .foregroundStyle(.secondary)
+            Text(run.title)
+                .font(.caption)
+                .fontWeight(.medium)
+                .lineLimit(2)
+            Text(run.id)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct RunCompareSection: View {
+    let title: String
+    let rows: [RunCompareRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 1) {
+                ForEach(rows) { row in
+                    RunCompareRowView(row: row)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.secondary.opacity(0.06))
+            )
+        }
+    }
+}
+
+private struct RunCompareRowView: View {
+    let row: RunCompareRow
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: row.matches ? "checkmark.circle.fill" : "circle.lefthalf.filled")
+                .font(.caption2)
+                .foregroundStyle(row.matches ? .green : .orange)
+                .frame(width: 12)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.label)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+
+                HStack(alignment: .top, spacing: 8) {
+                    CompareValueColumn(label: "A", value: row.leftValue)
+                    CompareValueColumn(label: "B", value: row.rightValue)
+                }
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+    }
+}
+
+private struct CompareValueColumn: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .lineLimit(3)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct RunCompareRow: Identifiable {
+    let id = UUID()
+    let label: String
+    let leftValue: String
+    let rightValue: String
+    let matches: Bool
+}
+
+private struct RunComparison {
+    let left: SimulationRun
+    let right: SimulationRun
+    let leftArtifacts: [ArtifactRef]
+    let rightArtifacts: [ArtifactRef]
+    let leftCharts: [ChartPayload]
+    let rightCharts: [ChartPayload]
+
+    init(left: SimulationRun, right: SimulationRun, messages: [ChatMessage]) {
+        self.left = left
+        self.right = right
+        self.leftArtifacts = RunEvidenceResolver.artifacts(for: left)
+        self.rightArtifacts = RunEvidenceResolver.artifacts(for: right)
+        self.leftCharts = messages
+            .filter { $0.originRunId == left.id }
+            .compactMap(\.chartPayload)
+        self.rightCharts = messages
+            .filter { $0.originRunId == right.id }
+            .compactMap(\.chartPayload)
+    }
+
+    var identityRows: [RunCompareRow] {
+        [
+            row("Run ID", left.id, right.id),
+            row("Status", left.status.displayName, right.status.displayName),
+            row("Events", formatInt(left.eventCount), formatInt(right.eventCount)),
+            row("Completed", left.completedAt ?? "none", right.completedAt ?? "none")
+        ]
+    }
+
+    var configurationRows: [RunCompareRow] {
+        let keys = Set(left.configuration.keys).union(right.configuration.keys).sorted()
+        guard !keys.isEmpty else {
+            return [row("Configuration", "none", "none")]
+        }
+        return keys.map { key in
+            row(key, left.configuration[key] ?? "missing", right.configuration[key] ?? "missing")
+        }
+    }
+
+    var summaryMetricRows: [RunCompareRow] {
+        let leftMetrics = summaryMetrics(for: left)
+        let rightMetrics = summaryMetrics(for: right)
+        let keys = Set(leftMetrics.keys).union(rightMetrics.keys).sorted()
+        guard !keys.isEmpty else {
+            return [row("summary.json", "missing or empty", "missing or empty")]
+        }
+        return keys.map { key in
+            row(key, leftMetrics[key] ?? "missing", rightMetrics[key] ?? "missing")
+        }
+    }
+
+    var artifactRows: [RunCompareRow] {
+        let leftPresence = artifactPresence(leftArtifacts)
+        let rightPresence = artifactPresence(rightArtifacts)
+        let labels = Set(leftPresence.keys).union(rightPresence.keys).sorted()
+        guard !labels.isEmpty else {
+            return [row("Artifacts", "none", "none")]
+        }
+        return labels.map { label in
+            row(label, leftPresence[label] ?? "missing", rightPresence[label] ?? "missing")
+        }
+    }
+
+    var chartRows: [RunCompareRow] {
+        let leftMap = chartPointCounts(leftCharts)
+        let rightMap = chartPointCounts(rightCharts)
+        let titles = Set(leftMap.keys).union(rightMap.keys).sorted()
+        guard !titles.isEmpty else {
+            return [row("Charts", "none", "none")]
+        }
+        return titles.map { title in
+            row(title, leftMap[title] ?? "missing", rightMap[title] ?? "missing")
+        }
+    }
+
+    var byteMatchRows: [RunCompareRow] {
+        [
+            byteMatchRow(fileName: "run.cc"),
+            byteMatchRow(fileName: "simulation_spec.json")
+        ]
+    }
+
+    private func row(_ label: String, _ leftValue: String, _ rightValue: String) -> RunCompareRow {
+        RunCompareRow(
+            label: label,
+            leftValue: leftValue,
+            rightValue: rightValue,
+            matches: leftValue == rightValue
+        )
+    }
+
+    private func formatInt(_ value: Int?) -> String {
+        guard let value else { return "none" }
+        return "\(value)"
+    }
+
+    private func artifactPresence(_ artifacts: [ArtifactRef]) -> [String: String] {
+        Dictionary(grouping: artifacts) { artifact in
+            artifact.label
+        }
+        .mapValues { artifacts in
+            "\(artifacts.count) present"
+        }
+    }
+
+    private func chartPointCounts(_ charts: [ChartPayload]) -> [String: String] {
+        var counts: [String: Int] = [:]
+        for chart in charts {
+            let count = chart.series.reduce(0) { $0 + $1.points.count }
+            counts[chart.title, default: 0] += count
+        }
+        return counts.mapValues { "\($0) points" }
+    }
+
+    private func byteMatchRow(fileName: String) -> RunCompareRow {
+        let leftURL = artifactURL(named: fileName, in: leftArtifacts)
+        let rightURL = artifactURL(named: fileName, in: rightArtifacts)
+
+        guard let leftURL else {
+            return RunCompareRow(label: fileName, leftValue: "missing", rightValue: rightURL == nil ? "missing" : "present", matches: false)
+        }
+        guard let rightURL else {
+            return RunCompareRow(label: fileName, leftValue: "present", rightValue: "missing", matches: false)
+        }
+
+        guard let leftData = try? Data(contentsOf: leftURL),
+              let rightData = try? Data(contentsOf: rightURL) else {
+            return RunCompareRow(label: fileName, leftValue: "unreadable", rightValue: "unreadable", matches: false)
+        }
+
+        return RunCompareRow(
+            label: fileName,
+            leftValue: "\(leftData.count) bytes",
+            rightValue: "\(rightData.count) bytes",
+            matches: leftData == rightData
+        )
+    }
+
+    private func artifactURL(named fileName: String, in artifacts: [ArtifactRef]) -> URL? {
+        artifacts.first { artifact in
+            URL(fileURLWithPath: artifact.relativePath).lastPathComponent == fileName
+                && FileManager.default.fileExists(atPath: artifact.relativePath)
+        }
+        .map { URL(fileURLWithPath: $0.relativePath) }
+    }
+
+    private func summaryMetrics(for run: SimulationRun) -> [String: String] {
+        guard let url = artifactURL(named: "summary.json", in: RunEvidenceResolver.artifacts(for: run)),
+              let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return [:]
+        }
+
+        return flattenSummaryMetrics(object)
+    }
+
+    private func flattenSummaryMetrics(_ value: Any, prefix: String = "") -> [String: String] {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [:]) { result, pair in
+                let key = prefix.isEmpty ? pair.key : "\(prefix).\(pair.key)"
+                result.merge(flattenSummaryMetrics(pair.value, prefix: key), uniquingKeysWith: { _, new in new })
+            }
+        }
+
+        if let array = value as? [Any] {
+            return [prefix: "\(array.count) items"]
+        }
+
+        if let number = value as? NSNumber {
+            return [prefix: number.stringValue]
+        }
+
+        if let string = value as? String {
+            return [prefix: string]
+        }
+
+        if value is NSNull {
+            return [prefix: "null"]
+        }
+
+        return [prefix: String(describing: value)]
     }
 }
 
