@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Xcode local state
+DerivedData/
+.codex/DerivedData/
+.codex/backups/
+build/
+*.xcresult
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# User-specific Xcode files generated after checkout
+*.xcuserstate
+
+# Local secrets/config
+.env
+.env.local
+.env.*.local
+GoogleService-Info.plist
+
+# Local app/runtime artifacts
+dist/
+*.log
+
+# Duplicate local vendor tree; the project references pythia_dist.
+pythia_dist 2/
