@@ -80,8 +80,10 @@ Generated simulation artifacts are stored under
 
 ## Baseline Local Status
 
-The repository is cloned at `/Users/akash009/vidura` from
-`https://github.com/Alfagov/ViduraLabs`.
+The active repository is `https://github.com/akassh9/vidura-labs`.
+Older local checkouts may still point at `Alfagov/ViduraLabs`; verify remotes
+before creating branches. Current PR work has been happening from
+`/Users/akash009/vidura-labs-pr`.
 
 Local development uses a repository-root `.env` with `OPENAI_API_KEY`. The run
 script exports `VIDURA_REPO_ROOT` so the app can resolve that file when launched
@@ -89,14 +91,14 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Build and smoke-test the OpenAI-backed macOS path with a short Pythia prompt.
-2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
+1. Export a completed run bundle with source, spec, logs, summaries, plots, and
+   manifest metadata.
+2. Add duplicate-and-modify run controls for event count, seed, and simple cuts.
+3. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
-3. Fix `moveThreadToProject` so it preserves runs/messages instead of
+4. Fix `moveThreadToProject` so it preserves runs/messages instead of
    delete/recreate semantics.
-4. Decide where the line should sit between OpenAI-driven codegen and the
+5. Decide where the line should sit between OpenAI-driven codegen and the
    deterministic `CodegenAgent` fallback.
-5. Add focused tests around deterministic agents, summary parsing,
+6. Add focused tests around deterministic agents, summary parsing,
    policy/physics checks, and store migrations before expanding analyses.
-6. Plan the next product slice: HEP/Pythia workflows, provenance, artifact
-   inspection, and repeatable run notebooks before broadening the platform.

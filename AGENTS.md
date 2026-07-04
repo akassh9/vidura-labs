@@ -29,6 +29,23 @@ Useful modes:
 
 The Codex app Run action is wired through `.codex/environments/environment.toml`.
 
+## GitHub Workflow
+
+The source-of-truth repo is:
+
+```text
+https://github.com/akassh9/vidura-labs
+```
+
+Work from a fresh branch off current `main` using the `codex/` prefix. Do not
+push directly to `main`. Open a pull request for every implementation slice,
+then report the PR URL, validation commands, smoke run IDs, and any known gaps.
+The project CTO/user will verify and merge.
+
+Before pushing, check that no secrets, local databases, DerivedData,
+Application Support artifacts, `.codex/backups`, key/cert-like files, or
+duplicate generated/vendor folders are included.
+
 ## Required Local Config
 
 Use a repository-root `.env` file:

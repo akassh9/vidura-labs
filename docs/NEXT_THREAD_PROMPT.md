@@ -1,48 +1,78 @@
 # Prompt For Next Thread
 
-Use this prompt in a fresh Codex thread from `/Users/akash009/vidura`:
+Use this prompt in a fresh Codex thread:
 
 ```text
-You are taking over Vidura Labs in `/Users/akash009/vidura`.
+You are taking over Vidura Labs as the implementation agent under CTO direction.
 
-Act as the implementation agent under the project CTO direction. Start by reading:
-- `/Users/akash009/vidura/AGENTS.md`
-- `/Users/akash009/vidura/docs/PROJECT_ORIENTATION.md`
-- `/Users/akash009/vidura/docs/NEXT_THREAD_HANDOFF.md`
-- `/Users/akash009/vidura/docs/CTO_ROADMAP.md`
+Use the active repo, not the old hackathon remote:
+- Source of truth: https://github.com/akassh9/vidura-labs
+- Work from a fresh clone or a checkout whose `git remote -v` points at `akassh9/vidura-labs`
+- Create a `codex/` branch and open a PR when done. Do not push directly to main.
 
-Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print `.env` or API keys. Do not revert uncommitted changes unless I explicitly ask.
+Start by reading:
+- AGENTS.md
+- docs/PROJECT_ORIENTATION.md
+- docs/NEXT_THREAD_HANDOFF.md
+- docs/CTO_ROADMAP.md
 
-Your task: implement the next slice, Smoke-gated Reproducible Runs.
+Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print `.env` or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
 
-Context: the previous thread implemented Run Evidence / Provenance. Build and launch passed, but no fresh GUI Pythia smoke was run after that slice. Before adding more features, prove the new run evidence path works on a fresh run.
+Your task: implement the next slice, Export Run Bundle.
 
-Stage 1: Fresh smoke and fix fallout.
-1. Build/launch if needed with `./script/build_and_run.sh --verify`.
-2. Run a fresh app smoke with:
-   `pp collisions at 13 TeV, 10,000 minimum-bias events, measuring charged-particle multiplicity, pT spectrum`
-   If GUI automation is impractical, ask me to submit that prompt in the running app, then inspect the DB and artifacts afterward.
-3. Verify the new run has completed status, multiple chart messages, evidence artifacts for `run.cc`, `simulation_spec.json`, `summary.json`, `summary_lines.txt`, `compile.log`, `run.log`, and plot/table outputs.
-4. Verify the evidence panel can inspect/copy/reveal those artifacts.
-5. Fix any direct fallout before moving on.
+Context:
+- Run Evidence / Provenance exists.
+- Fresh smoke-gated reproducible runs are complete.
+- Exact rerun from persisted `simulation_spec.json` and `run.cc` is complete.
+- Run Compare is merged in PR #1 and compares completed runs inside the app.
+- The next trust layer is portability: a completed run should export into a self-contained bundle that can be shared, cited, archived, or inspected outside the app database.
 
-Stage 2: Exact rerun.
-If Stage 1 is clean, add a `Rerun Exact` action for completed simulation runs:
-1. Load the existing run's `simulation_spec.json` and `run.cc` from persisted evidence.
-2. Create a new sibling run in the same thread.
-3. Execute the same generated source through `RunnerService` without using OpenAI guide/intent/codegen.
-4. Persist result messages, chart messages, summary, and all evidence artifacts for the new run.
-5. Keep the rerun deterministic and evidence-driven.
-6. Build with `./script/build_and_run.sh build`.
-7. Verify launch with `./script/build_and_run.sh --verify`.
+Implementation target:
+1. Add an Export Bundle action for completed simulation runs from the Run Evidence surface.
+2. Prefer a folder export for the first slice. Swift has no standard zip API; do not add archive complexity unless the repo already has a clean local pattern.
+3. Use persisted evidence artifacts first, while preserving fallback disk discovery for historical runs where practical.
+4. Include a machine-readable `manifest.json`.
+5. Include a human-readable `README.md` or `run_report.md`.
+6. Copy available evidence files into the bundle:
+   - `run.cc`
+   - `simulation_spec.json`
+   - `summary.json`
+   - `summary_lines.txt`
+   - `compile.log`
+   - `run.log`
+   - plot/table artifacts such as `hist_primary.txt` and `hist_pt.txt`
+7. Keep export deterministic and evidence-driven. Do not call OpenAI for export.
+8. If a noncritical artifact is missing, record that in the manifest or UI without failing the entire export.
 
-Acceptance criteria:
-- Fresh smoke proves multi-chart and evidence persistence on a new run.
-- `Rerun Exact` creates a new run with its own run ID, messages, artifacts, and run folder.
-- Exact rerun bypasses OpenAI planning/codegen and uses the audited source/spec.
-- Historical runs still render.
-- No secrets are printed.
+Manifest should include at least:
+- export format version
+- export timestamp
+- thread ID and run ID
+- run title/status/event count
+- run created/updated timestamps
+- artifact list with relative paths, byte sizes, and artifact type/source
+- chart titles and point counts when available
+- summary metrics when available
+- simulation metadata from `simulation_spec.json` when available
 
-Be the driver. If the smoke exposes a more important direct blocker, fix that before implementing rerun.
+UX expectations:
+- The export action should be discoverable from the evidence panel for a completed simulation run.
+- After export, provide a clear success state with Copy Path and Reveal in Finder, or use a standard macOS destination panel if that fits the existing SwiftUI/AppKit patterns.
+- Existing Evidence and Compare behavior must keep working.
+
+Validation:
+1. Run `./script/build_and_run.sh build`.
+2. Run `./script/build_and_run.sh --verify`.
+3. Use an existing completed smoke run if available, such as `55C18C16-54E4-4A3C-BFFE-DEEE030A7459` or `98CA353A-941B-4B5A-B6A6-070D89FDE59F`, to verify the bundle contents.
+4. Run `git diff --check`.
+5. Confirm no `.env`, local DBs, DerivedData, generated simulation folders, exported bundles, key/cert-like files, or `.codex/backups` are tracked.
+6. Push the branch and open a PR against `akassh9/vidura-labs/main`.
+
+Report back with:
+- PR URL
+- changed files
+- validation commands and results
+- run ID used for export verification
+- exported bundle file list
+- known gaps or follow-up recommendations
 ```
-

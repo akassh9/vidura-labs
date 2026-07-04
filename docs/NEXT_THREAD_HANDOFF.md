@@ -1,8 +1,8 @@
 # Next Thread Handoff
 
 Date: 2026-07-04
-Workspace: `/Users/akash009/vidura`
-Repo: `https://github.com/Alfagov/ViduraLabs`
+Active repo: `https://github.com/akassh9/vidura-labs`
+Working clone used for PRs: `/Users/akash009/vidura-labs-pr`
 
 ## CTO Direction
 
@@ -17,15 +17,21 @@ Strategic decisions:
 - Do not reintroduce the old hackathon sponsored-provider stack.
 - Use OpenAI for model-backed agent stages.
 - Keep local Pythia execution and local SQLite persistence.
-- Treat generated code, logs, plots, run metadata, and replayability as product
-  surface, not implementation details.
+- Treat generated code, logs, plots, run metadata, replayability, and export as
+  product surface.
 
 ## Current Baseline
 
-The repo is intentionally dirty with ongoing modernization work. Do not discard
-uncommitted changes unless the user explicitly asks.
+The source-of-truth repo is the private GitHub repo:
 
-Local `.env` exists and contains `OPENAI_API_KEY`. It is ignored. Never print it.
+```text
+https://github.com/akassh9/vidura-labs
+```
+
+Older local clones may still point at `Alfagov/ViduraLabs`. Always verify
+`git remote -v` before creating a branch or PR.
+
+Local `.env` contains `OPENAI_API_KEY`. It is ignored. Never print it.
 
 Run path:
 
@@ -34,17 +40,26 @@ Run path:
 ./script/build_and_run.sh --verify
 ```
 
-Latest reported launch verification from the Run Evidence thread:
-
-```text
-Vidura Labs PID 41069
-```
-
-Process IDs drift, so verify with:
+Process IDs drift, so verify launches with:
 
 ```bash
 pgrep -x "Vidura Labs"
 ```
+
+## GitHub Workflow
+
+Implementation agents should:
+
+- start from current `main` on `akassh9/vidura-labs`,
+- create a `codex/` branch,
+- make the scoped change,
+- run validation,
+- push the branch,
+- open a PR,
+- report the PR URL, validation, smoke run IDs, secret/artifact checks, and
+  known gaps.
+
+Do not push directly to `main`. The CTO/user verifies and merges PRs.
 
 ## Already Completed
 
@@ -77,112 +92,110 @@ Multi-chart slice:
 
 Run Evidence / Provenance slice:
 
-- Successful runs persist evidence artifacts for:
-  - `run.cc`
-  - `simulation_spec.json`
-  - `summary.json`
-  - `summary_lines.txt`
-  - `compile.log`
-  - `run.log`
-  - plot/table outputs
-- Runner artifact collection includes declared extra output files while excluding
-  source/log/summary files handled as evidence.
+- Successful runs persist evidence artifacts for `run.cc`,
+  `simulation_spec.json`, `summary.json`, `summary_lines.txt`, `compile.log`,
+  `run.log`, and plot/table outputs.
 - The old source-only `Run Configurations` panel was replaced with a `Run
   Evidence` surface.
 - Added grouped artifact sections, read-only artifact viewing, Copy Path, Reveal
   in Finder, Copy Run ID, and Reveal Run Folder.
 - Added fallback disk discovery for historical runs under Application Support.
-- Reported validation:
+
+Smoke-gated reproducible runs:
+
+- Fresh smoke run `55C18C16-54E4-4A3C-BFFE-DEEE030A7459` completed with
+  `event_count=10000`.
+- Persisted two chart messages: `Charged Multiplicity` and
+  `Transverse Momentum Spectrum`.
+- Persisted evidence for `run.cc`, `simulation_spec.json`, `summary.json`,
+  `summary_lines.txt`, `compile.log`, `run.log`, `hist_primary.txt`, and
+  `hist_pt.txt`.
+- Added `OrchestratorService.rerunExact(run:)`.
+- Exact rerun uses persisted `simulation_spec.json` and `run.cc`, bypassing
+  OpenAI guide/intent/codegen.
+- Verified exact rerun `98CA353A-941B-4B5A-B6A6-070D89FDE59F` with byte-equal
+  `run.cc` and `simulation_spec.json`.
+
+Run Compare:
+
+- PR #1: `https://github.com/akassh9/vidura-labs/pull/1`
+- Merged at `6e744a9d40a92513239c970118313e0665a43241`.
+- Adds a Compare tab beside Run Evidence.
+- Compares two completed runs in the current thread across identity,
+  configuration, summary metrics, artifact presence, chart titles/point counts,
+  and byte-level `run.cc`/`simulation_spec.json` equality.
+- Validation before merge:
   - `./script/build_and_run.sh build` succeeded.
   - `./script/build_and_run.sh --verify` succeeded.
-  - `pgrep -x "Vidura Labs"` confirmed PID `41069`.
-  - `git diff --check` passed for touched files.
-
-Important gap: Run Evidence was not validated with a fresh GUI Pythia smoke.
-The next thread must do that before building more features.
-
-## Existing Smoke Evidence
-
-Known pre-evidence smoke run:
-
-- Run ID: `49B0EFE9-1BE2-4661-A2B6-DCD419D12DD3`.
-- Prompt:
-  `pp collisions at 13 TeV, 10,000 minimum-bias events, measuring charged-particle multiplicity, pT spectrum`
-- Status: completed.
-- Generated events: 10000.
-- Mean charged multiplicity: 114.374.
-- Mean charged-particle pT: 0.516 GeV.
-- Artifacts:
-  `~/Library/Application Support/com.AL.PhysicsCompanion/simulations/49B0EFE9-1BE2-4661-A2B6-DCD419D12DD3/attempt_1/`
-
-That run predates the latest persistence/evidence changes. Use it only as a
-reference artifact set, not as proof that new runs populate the new evidence UI.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `git diff --check` passed.
+  - Secret/artifact tracked-file scan was clean.
 
 ## Next Product Slice
 
-Smoke-gated Reproducible Runs.
+Export Run Bundle.
 
-This has two stages:
-
-1. Run a fresh end-to-end Pythia smoke through the app and verify the new
-   multi-chart plus evidence behavior is real in persisted data and UI.
-2. If the smoke is clean, implement "Rerun Exact" from an existing completed run.
-
-Why this next: now that runs are inspectable, the next trust layer is
-repeatability. A user should be able to take an audited run record and rerun the
-exact same generated C++/spec into a new run, then compare the new evidence.
+Why this next: evidence, exact rerun, and compare make a run inspectable inside
+the app. Export makes a run portable. A completed simulation should become a
+self-contained folder that can be shared with another physicist, archived with a
+paper/notebook, or attached to an issue without depending on the live SQLite DB.
 
 ## Recommended Implementation
 
-Stage 1: Fresh smoke and fix fallout.
+Add an export action for completed simulation runs from the Run Evidence surface.
+Keep the first implementation narrow and folder-based; Swift has no standard zip
+API, and a correct folder export is more valuable than a brittle custom archive.
 
-- Use this prompt:
+The exported folder should include:
 
-```text
-pp collisions at 13 TeV, 10,000 minimum-bias events, measuring charged-particle multiplicity, pT spectrum
-```
+- `manifest.json`
+- `README.md` or `run_report.md`
+- `run.cc`
+- `simulation_spec.json`
+- `summary.json`
+- `summary_lines.txt`
+- `compile.log`
+- `run.log`
+- plot/table artifacts such as `hist_primary.txt` and `hist_pt.txt`
 
-- Verify the new run has:
-  - completed status,
-  - at least two chart messages for multiplicity and pT,
-  - artifacts for source/spec/summary/logs/plots,
-  - evidence panel entries for those files,
-  - no summary claim that pT is missing.
+`manifest.json` should include at least:
 
-- If GUI automation is impractical, ask the user to submit the smoke prompt in
-  the running app, then inspect SQLite and Application Support afterward.
+- export format version,
+- export timestamp,
+- app/project name if available,
+- thread ID and run ID,
+- run title/status/event count,
+- run created/updated timestamps,
+- simulation spec metadata if available,
+- summary metrics if available,
+- chart titles and point counts if available,
+- artifact list with relative paths, byte sizes, and source artifact type.
 
-Stage 2: Exact rerun.
+Use persisted evidence first. Preserve fallback disk discovery for historical
+runs where possible.
 
-- Add a `Rerun Exact` action to the Run Evidence surface for completed simulation
-  runs.
-- Prefer rerunning from persisted evidence:
-  - load `simulation_spec.json`,
-  - load `run.cc`,
-  - create a new sibling run in the same thread,
-  - execute the same generated source through `RunnerService`,
-  - persist the same evidence artifact types,
-  - emit result/chart/summary messages for the new run.
-- Avoid using OpenAI guide/intent/codegen for exact rerun. Exact rerun should be
-  deterministic and evidence-driven.
-- If the existing orchestration shape makes this too large, implement the
-  internal service path first and expose the UI action second.
+For macOS UX, prefer a normal folder destination flow. If that is too large for
+the first slice, export to a deterministic Application Support `exports/<run-id>`
+folder and expose Copy Path / Reveal in Finder.
 
 ## Acceptance Criteria
 
-- Fresh smoke run proves multi-chart and evidence persistence on a new run.
-- Any smoke fallout is fixed before adding rerun.
-- `Rerun Exact` creates a new run from an existing completed run without going
-  through OpenAI planning/codegen.
-- The rerun has its own run ID, status, messages, artifacts, and run folder.
-- The rerun preserves the original generated source and simulation settings.
-- Build succeeds.
-- Verify launch succeeds.
-- No secrets are printed or logged.
+- A completed run can be exported without using OpenAI.
+- The exported bundle is self-contained and excludes secrets, local DB files,
+  DerivedData, and unrelated Application Support state.
+- Missing optional artifacts are reported in the UI or manifest without failing
+  the whole export.
+- The bundle includes a human-readable report and a machine-readable manifest.
+- Existing Evidence and Compare behavior still works.
+- `./script/build_and_run.sh build` succeeds.
+- `./script/build_and_run.sh --verify` succeeds.
+- Branch is pushed and a PR is opened against `akassh9/vidura-labs/main`.
 
 ## Useful Commands
 
 ```bash
+git remote -v
+git status --short --branch
 ./script/build_and_run.sh build
 ./script/build_and_run.sh --verify
 pgrep -x "Vidura Labs"
@@ -215,7 +228,8 @@ sqlite3 "$HOME/Library/Application Support/com.AL.PhysicsCompanion/research.db" 
 - Do not reintroduce Firebase/Gemini.
 - Do not restart CLI work.
 - Do not print `.env`.
-- Do not revert unrelated uncommitted changes.
+- Do not commit local databases, DerivedData, generated simulation folders, or
+  exported run bundles.
+- Do not revert unrelated user or agent changes.
 - Back up live Application Support DB before manual data patching.
-- Keep repeatability deterministic; do not call OpenAI for exact reruns.
-
+- Keep export deterministic and evidence-driven; do not call OpenAI for export.
