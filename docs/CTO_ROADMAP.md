@@ -42,10 +42,10 @@ Completed:
 
 - Exact rerun from audited source/spec.
 - Compare two runs side by side.
+- Export a run bundle with source, logs, summary, charts, and metadata.
 
 Needed:
 
-- Export a run bundle with source, logs, summary, charts, and metadata.
 - Duplicate run with modified event count/seed/cuts.
 - Promote exact rerun and compare into a tighter reproducibility workflow.
 
@@ -76,13 +76,14 @@ Needed:
 
 ## Current Next Slice
 
-Export Run Bundle.
+Parameterized Rerun.
 
-Why: the app can now produce evidence, rerun exact source/spec, and compare
-completed runs. The next trust layer is portability. A completed run should be
-exportable as a self-contained folder with source, spec, logs, summaries,
-plots/tables, and a manifest so it can be shared, cited, archived, or inspected
-outside the live app database.
+Why: the app can now prove, rerun, compare, and export a completed run. The next
+research workflow is controlled variation: start from an audited
+`simulation_spec.json`, change event count and random seed, optionally adjust
+simple cuts, then run a sibling analysis without returning to OpenAI planning or
+codegen. This makes "what changed and why?" a first-class workflow instead of a
+manual prompt-and-compare loop.
 
 ## GitHub Operating Model
 

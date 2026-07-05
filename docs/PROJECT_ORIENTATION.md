@@ -91,9 +91,9 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Export a completed run bundle with source, spec, logs, summaries, plots, and
-   manifest metadata.
-2. Add duplicate-and-modify run controls for event count, seed, and simple cuts.
+1. Add duplicate-and-modify run controls for event count, seed, and simple cuts.
+2. Tighten the exact rerun, compare, export, and parameterized-rerun workflow
+   into one reproducibility surface.
 3. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 4. Fix `moveThreadToProject` so it preserves runs/messages instead of

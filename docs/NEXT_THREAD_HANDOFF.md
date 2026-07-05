@@ -131,62 +131,83 @@ Run Compare:
   - `git diff --check` passed.
   - Secret/artifact tracked-file scan was clean.
 
+Export Run Bundle:
+
+- PR #3: `https://github.com/akassh9/vidura-labs/pull/3`
+- Merged at `5bb22ac5764bcb819fcb1e33e079dde391568210`.
+- Adds an Export Run Bundle action to completed Run Evidence cards.
+- Folder export writes `manifest.json` and `run_report.md`.
+- Copies run evidence only: `run.cc`, `simulation_spec.json`, summaries, logs,
+  and plot/table artifacts.
+- Manifest includes run identity, configuration, flattened
+  `simulation_spec.json`, flattened `summary.json` metrics, chart titles/point
+  counts, copied artifacts, missing artifact references, and missing expected
+  artifacts.
+- Uses existing `RunEvidenceResolver`; no OpenAI calls.
+- Smoke bundle inspected for run `55C18C16-54E4-4A3C-BFFE-DEEE030A7459`.
+- Validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `git diff --check` passed.
+  - Secret/artifact tracked-file scan was clean.
+
 ## Next Product Slice
 
-Export Run Bundle.
+Parameterized Rerun.
 
-Why this next: evidence, exact rerun, and compare make a run inspectable inside
-the app. Export makes a run portable. A completed simulation should become a
-self-contained folder that can be shared with another physicist, archived with a
-paper/notebook, or attached to an issue without depending on the live SQLite DB.
+Why this next: the app can now prove, rerun exactly, compare, and export a
+completed run. The next research workflow is controlled variation. A user should
+be able to take an audited run, change event count and random seed, optionally
+adjust simple cuts, execute a sibling run, and then compare/export the result
+without redoing OpenAI planning/codegen.
 
 ## Recommended Implementation
 
-Add an export action for completed simulation runs from the Run Evidence surface.
-Keep the first implementation narrow and folder-based; Swift has no standard zip
-API, and a correct folder export is more valuable than a brittle custom archive.
+Add a controlled duplicate/rerun action for completed simulation runs from the
+Run Evidence surface. Keep the first implementation scoped to fields already
+present in `SimulationSpec`:
 
-The exported folder should include:
+- `event_count`
+- `seed`
+- selected `cuts_settings` entries, especially `PhaseSpace:pTHatMin`
 
-- `manifest.json`
-- `README.md` or `run_report.md`
-- `run.cc`
-- `simulation_spec.json`
-- `summary.json`
-- `summary_lines.txt`
-- `compile.log`
-- `run.log`
-- plot/table artifacts such as `hist_primary.txt` and `hist_pt.txt`
+Preferred backend shape:
 
-`manifest.json` should include at least:
+- load persisted `simulation_spec.json` from evidence,
+- create a modified `SimulationSpec` with a new `run_id`,
+- generate deterministic source from the modified spec with `CodegenAgent`
+  rather than reusing the old exact `run.cc`,
+- create a new sibling run in the same thread,
+- execute through the same `RunnerService`/evidence/chart/summary path,
+- record in the new run configuration that it is derived from the source run.
 
-- export format version,
-- export timestamp,
-- app/project name if available,
-- thread ID and run ID,
-- run title/status/event count,
-- run created/updated timestamps,
-- simulation spec metadata if available,
-- summary metrics if available,
-- chart titles and point counts if available,
-- artifact list with relative paths, byte sizes, and source artifact type.
+Do not call OpenAI guide/intent/codegen for this slice. This is a deterministic
+variant of an audited run, not a new natural-language planning pass.
 
-Use persisted evidence first. Preserve fallback disk discovery for historical
-runs where possible.
+For UI, prefer a small sheet or popover launched from the Evidence card with:
 
-For macOS UX, prefer a normal folder destination flow. If that is too large for
-the first slice, export to a deterministic Application Support `exports/<run-id>`
-folder and expose Copy Path / Reveal in Finder.
+- current event count,
+- current seed,
+- a "new random seed" affordance,
+- editable pT-hat minimum when present or when adding a simple cut,
+- Cancel and Run Variant actions.
+
+If the full UI is too large, implement the orchestrator/store path first and add
+a minimal evidence-card action that creates a variant with a changed seed and
+event count.
 
 ## Acceptance Criteria
 
-- A completed run can be exported without using OpenAI.
-- The exported bundle is self-contained and excludes secrets, local DB files,
-  DerivedData, and unrelated Application Support state.
-- Missing optional artifacts are reported in the UI or manifest without failing
-  the whole export.
-- The bundle includes a human-readable report and a machine-readable manifest.
+- A completed run can create a sibling parameterized rerun without OpenAI.
+- The new run uses a modified persisted `SimulationSpec`, not the old exact
+  source file.
+- At minimum, event count and seed can be changed.
+- The new run persists normal messages, charts, summaries, and evidence
+  artifacts.
+- The new run configuration makes the modified parameters visible.
 - Existing Evidence and Compare behavior still works.
+- Existing Export Run Bundle behavior still works for the new variant.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - Branch is pushed and a PR is opened against `akassh9/vidura-labs/main`.
