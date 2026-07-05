@@ -43,10 +43,10 @@ Completed:
 - Exact rerun from audited source/spec.
 - Compare two runs side by side.
 - Export a run bundle with source, logs, summary, charts, and metadata.
+- Duplicate run with modified event count/seed/cuts.
 
 Needed:
 
-- Duplicate run with modified event count/seed/cuts.
 - Promote exact rerun and compare into a tighter reproducibility workflow.
 
 ### Phase 2: Raise Physics Quality
@@ -76,14 +76,13 @@ Needed:
 
 ## Current Next Slice
 
-Parameterized Rerun.
+Run Lineage & Reproducibility Surface.
 
-Why: the app can now prove, rerun, compare, and export a completed run. The next
-research workflow is controlled variation: start from an audited
-`simulation_spec.json`, change event count and random seed, optionally adjust
-simple cuts, then run a sibling analysis without returning to OpenAI planning or
-codegen. This makes "what changed and why?" a first-class workflow instead of a
-manual prompt-and-compare loop.
+Why: the app now has the core reproducibility actions: exact rerun,
+parameterized rerun, compare, and export. They still behave like separate
+buttons. The next product step is to make run relationships visible and
+navigable so a user can answer: what is this run derived from, what changed, and
+what should I compare or export next?
 
 ## GitHub Operating Model
 

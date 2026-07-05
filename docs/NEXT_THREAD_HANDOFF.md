@@ -154,62 +154,84 @@ Export Run Bundle:
   - `git diff --check` passed.
   - Secret/artifact tracked-file scan was clean.
 
+Parameterized Rerun:
+
+- PR #6: `https://github.com/akassh9/vidura-labs/pull/6`
+- Merged at `459a37f32f15b7e50d1925a1ac69b397bb746193`.
+- Adds a Parameterized Rerun action to completed Run Evidence cards.
+- Loads persisted `simulation_spec.json`, applies controlled changes, and
+  regenerates deterministic C++ with `CodegenAgent`.
+- Supports event count, random seed, and `PhaseSpace:pTHatMin`.
+- Creates a sibling run in the same thread and records source-run provenance in
+  configuration:
+  - `Vidura:variantOfRunID`
+  - `Vidura:variantChanges`
+  - `Vidura:variantCodegen`
+- Bypasses OpenAI guide/intent/codegen. The existing post-run physics summary
+  stage still follows the normal path.
+- Smoke validation:
+  - Source run: `55C18C16-54E4-4A3C-BFFE-DEEE030A7459`.
+  - Variant run: `B28DBDBC-B49D-4F40-AC6B-7F85113744B1`.
+  - Tested `event_count 10000 -> 200`, `seed 625434 -> 13579`,
+    `PhaseSpace:pTHatMin unset -> 18.5`.
+  - Variant completed with modified `simulation_spec.json`, deterministic
+    `run.cc`, `summary.json`, logs, `hist_primary.txt`, `hist_pt.txt`, two
+    chart messages, and evidence artifacts.
+  - Export manifest for the variant included two charts, all expected artifacts,
+    and no missing artifacts.
+- Validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `git diff --check` passed.
+  - Tracked-file and diff secret scans were clean.
+
 ## Next Product Slice
 
-Parameterized Rerun.
+Run Lineage & Reproducibility Surface.
 
-Why this next: the app can now prove, rerun exactly, compare, and export a
-completed run. The next research workflow is controlled variation. A user should
-be able to take an audited run, change event count and random seed, optionally
-adjust simple cuts, execute a sibling run, and then compare/export the result
-without redoing OpenAI planning/codegen.
+Why this next: exact rerun, parameterized rerun, compare, and export now work,
+but they are still separate actions. A user needs to see how runs relate: which
+run is the source, which are exact reruns, which are variants, what changed, and
+what comparison/export action makes sense next.
 
 ## Recommended Implementation
 
-Add a controlled duplicate/rerun action for completed simulation runs from the
-Run Evidence surface. Keep the first implementation scoped to fields already
-present in `SimulationSpec`:
+Keep this slice inside the current data model unless a hard blocker appears.
+Use existing configuration keys, titles, messages, and evidence to infer
+lineage. Add schema only if the existing run/message/artifact data cannot support
+the UI.
 
-- `event_count`
-- `seed`
-- selected `cuts_settings` entries, especially `PhaseSpace:pTHatMin`
+Suggested shape:
 
-Preferred backend shape:
-
-- load persisted `simulation_spec.json` from evidence,
-- create a modified `SimulationSpec` with a new `run_id`,
-- generate deterministic source from the modified spec with `CodegenAgent`
-  rather than reusing the old exact `run.cc`,
-- create a new sibling run in the same thread,
-- execute through the same `RunnerService`/evidence/chart/summary path,
-- record in the new run configuration that it is derived from the source run.
-
-Do not call OpenAI guide/intent/codegen for this slice. This is a deterministic
-variant of an audited run, not a new natural-language planning pass.
-
-For UI, prefer a small sheet or popover launched from the Evidence card with:
-
-- current event count,
-- current seed,
-- a "new random seed" affordance,
-- editable pT-hat minimum when present or when adding a simple cut,
-- Cancel and Run Variant actions.
-
-If the full UI is too large, implement the orchestrator/store path first and add
-a minimal evidence-card action that creates a variant with a changed seed and
-event count.
+- Add a `RunLineageResolver` near the Run Evidence/Compare code or as a small
+  local helper.
+- Detect variant relationships from `Vidura:variantOfRunID`.
+- Add exact-rerun provenance going forward by setting a configuration key such
+  as `Vidura:exactRerunOfRunID` inside `OrchestratorService.rerunExact(run:)`.
+- For historical exact reruns, infer cautiously from the request message
+  `Rerun exact from run <id>` when available.
+- In Run Evidence cards, show a compact reproducibility row:
+  - source run short ID,
+  - type: original, exact rerun, or variant,
+  - variant changes when present.
+- Add a direct "Compare to Source" action for exact reruns and variants. It
+  should switch the side panel to Compare and preselect source + derived run.
+- In Run Compare, surface relationship context when the selected pair is a
+  source/derived pair.
+- Keep Export Run Bundle and both rerun actions working.
 
 ## Acceptance Criteria
 
-- A completed run can create a sibling parameterized rerun without OpenAI.
-- The new run uses a modified persisted `SimulationSpec`, not the old exact
-  source file.
-- At minimum, event count and seed can be changed.
-- The new run persists normal messages, charts, summaries, and evidence
-  artifacts.
-- The new run configuration makes the modified parameters visible.
+- Variants show their source run and parameter changes in the Evidence surface.
+- New exact reruns record their source run in configuration.
+- Historical exact reruns still show a best-effort source relationship when it
+  can be inferred from existing messages.
+- Derived runs have a one-click Compare to Source path.
+- Run Compare labels source/derived relationships when applicable.
 - Existing Evidence and Compare behavior still works.
-- Existing Export Run Bundle behavior still works for the new variant.
+- Existing Exact Rerun, Parameterized Rerun, and Export Run Bundle behavior
+  still works.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - Branch is pushed and a PR is opened against `akassh9/vidura-labs/main`.
