@@ -2,7 +2,7 @@
 
 Date: 2026-07-04
 Active repo: `https://github.com/akassh9/vidura-labs`
-Working clone used for PRs: `/Users/akash009/vidura-labs-pr`
+Canonical local workspace: `/Users/akash009/vidura`
 
 ## CTO Direction
 
@@ -28,8 +28,10 @@ The source-of-truth repo is the private GitHub repo:
 https://github.com/akassh9/vidura-labs
 ```
 
-Older local clones may still point at `Alfagov/ViduraLabs`. Always verify
-`git remote -v` before creating a branch or PR.
+The canonical local checkout at `/Users/akash009/vidura` points at
+`akassh9/vidura-labs`. Older public-repo checkouts were archived under
+`/Users/akash009/vidura-legacy-archive-*`. Always verify `git remote -v` before
+creating a branch or PR.
 
 Local `.env` contains `OPENAI_API_KEY`. It is ignored. Never print it.
 

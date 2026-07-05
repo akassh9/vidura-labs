@@ -81,9 +81,9 @@ Generated simulation artifacts are stored under
 ## Baseline Local Status
 
 The active repository is `https://github.com/akassh9/vidura-labs`.
-Older local checkouts may still point at `Alfagov/ViduraLabs`; verify remotes
-before creating branches. Current PR work has been happening from
-`/Users/akash009/vidura-labs-pr`.
+The canonical local workspace is `/Users/akash009/vidura`. Older public-repo
+checkouts were archived under `/Users/akash009/vidura-legacy-archive-*`; verify
+remotes before creating branches.
 
 Local development uses a repository-root `.env` with `OPENAI_API_KEY`. The run
 script exports `VIDURA_REPO_ROOT` so the app can resolve that file when launched
