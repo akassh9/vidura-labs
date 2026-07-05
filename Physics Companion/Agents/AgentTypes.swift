@@ -157,6 +157,13 @@ struct SimulationSpec: Codable, Sendable {
     }
 }
 
+/// User-controlled changes for a deterministic sibling run derived from persisted evidence.
+struct ParameterizedRerunRequest: Sendable {
+    let eventCount: Int
+    let seed: Int
+    let pTHatMin: Double?
+}
+
 // MARK: - GeneratedCode
 
 /// Output of the code generation stage.

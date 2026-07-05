@@ -490,6 +490,161 @@ final class OrchestratorService: ObservableObject {
         }
     }
 
+    /// Creates a sibling run from persisted spec evidence, applies controlled parameter changes,
+    /// regenerates deterministic source, and executes through the normal runner path.
+    @discardableResult
+    func rerunParameterized(
+        run sourceRun: SimulationRun,
+        request: ParameterizedRerunRequest
+    ) async throws -> SimulationRun {
+        guard sourceRun.status == .completed else {
+            throw OrchestratorError.rerunUnavailable("Only completed simulation runs can create a parameterized rerun.")
+        }
+        guard (1...50_000).contains(request.eventCount) else {
+            throw OrchestratorError.rerunUnavailable("Event count must be between 1 and 50,000.")
+        }
+        guard (1...900_000_000).contains(request.seed) else {
+            throw OrchestratorError.rerunUnavailable("Random seed must be between 1 and 900,000,000.")
+        }
+        if let pTHatMin = request.pTHatMin, pTHatMin < 0 {
+            throw OrchestratorError.rerunUnavailable("PhaseSpace:pTHatMin must be non-negative.")
+        }
+
+        isRunning = true
+        currentPhase = "queued"
+        lastError = nil
+        simulationProgress = nil
+        estimatedSecondsRemaining = nil
+        simulationStartDate = nil
+        activeThreadId = sourceRun.threadId
+
+        defer {
+            isRunning = false
+            currentPhase = "idle"
+            simulationProgress = nil
+            estimatedSecondsRemaining = nil
+            simulationStartDate = nil
+            activeThreadId = nil
+        }
+
+        let specPath = try evidencePath(for: sourceRun, named: "simulation_spec.json")
+        let specData = try Data(contentsOf: URL(fileURLWithPath: specPath))
+        let sourceSpec = try JSONDecoder().decode(SimulationSpec.self, from: specData)
+
+        let baseTitle = sourceRun.title
+            .replacingOccurrences(of: "Exact rerun: ", with: "")
+            .replacingOccurrences(of: "Variant: ", with: "")
+        let variant = try await store.createRun(
+            threadId: sourceRun.threadId,
+            title: "Variant: \(baseTitle)",
+            configuration: sourceRun.configuration
+        )
+
+        let modifiedSpec = buildParameterizedSpec(
+            from: sourceSpec,
+            runId: variant.id,
+            request: request
+        )
+        var configuration = buildConfigurationDict(from: modifiedSpec)
+        let changes = parameterChangeSummary(sourceSpec: sourceSpec, modifiedSpec: modifiedSpec)
+        configuration["Vidura:variantOfRunID"] = sourceRun.id
+        configuration["Vidura:variantChanges"] = changes.joined(separator: "; ")
+        configuration["Vidura:variantCodegen"] = "deterministic"
+        try await store.updateRunConfiguration(id: variant.id, configuration: configuration)
+
+        let prompt = "Parameterized rerun of \(sourceRun.id): \(changes.joined(separator: "; "))."
+        let ctx = OrchestratorRunContext(
+            runId: variant.id,
+            prompt: prompt,
+            store: store,
+            settingsStore: settingsStore,
+            threadId: sourceRun.threadId,
+            maxAttempts: 1
+        )
+        ctx.spec = modifiedSpec
+        ctx.intent = buildIntent(from: modifiedSpec, prompt: prompt)
+        ctx.generated = CodegenAgent.run(spec: modifiedSpec)
+        ctx.attemptNumber = 1
+        ctx.emitEvent(phase: "queued", step: "parameterized_rerun_started", data: [
+            "source_run_id": sourceRun.id,
+            "event_count": "\(modifiedSpec.eventCount)",
+            "seed": "\(modifiedSpec.seed)",
+            "PhaseSpace:pTHatMin": formattedCutValue(phaseSpacePTHatMin(in: modifiedSpec.cutsSettings)) ?? "unset"
+        ])
+        ctx.emitEvent(phase: "codegen", step: "deterministic_variant", data: [
+            "origin": ctx.generated?.origin ?? "deterministic"
+        ])
+
+        let requestMessage = ChatMessage(
+            id: UUID().uuidString,
+            role: "user",
+            content: "Create a parameterized rerun from run \(sourceRun.id).\n\(changes.joined(separator: "\n"))",
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            originRunId: variant.id,
+            sender: .user
+        )
+        try await store.addChatMessage(runId: variant.id, message: requestMessage)
+
+        do {
+            try await store.updateRunStatus(id: variant.id, status: .running)
+
+            currentPhase = "compile"
+            ctx.emitEvent(phase: "compile", step: "parameterized_rerun_executing")
+            let attempt = try await runExecutorStage(ctx: ctx)
+            ctx.lastAttempt = attempt
+
+            guard attempt.status == "success" else {
+                try await finalizeFailure(
+                    ctx: ctx,
+                    diagnostics: attempt.diagnostics ?? "Parameterized rerun failed.",
+                    lastMsgId: requestMessage.id
+                )
+                throw OrchestratorError.rerunUnavailable(attempt.diagnostics ?? "Parameterized rerun failed.")
+            }
+
+            currentPhase = "results"
+            ctx.emitEvent(phase: "done", step: "summarizing")
+            let summary = try await runResultStage(ctx: ctx)
+            let summaryMessageId = try await finalizeSuccess(
+                ctx: ctx,
+                summaryText: summary,
+                lastMsgId: requestMessage.id
+            )
+
+            currentPhase = "plotting"
+            ctx.emitEvent(phase: "plotting", step: "started")
+            let plottingOutput = try await runPlottingStage(ctx: ctx, lastMsgId: summaryMessageId)
+            ctx.emitEvent(phase: "plotting", step: "completed")
+
+            currentPhase = "physics_summary"
+            ctx.emitEvent(phase: "physics_summary", step: "started")
+            let runMessages = try await store.fetchRunMessagesAndParents(forRun: variant.id)
+            let physicsSummary = try await runPhysicsSummaryStage(
+                ctx: ctx,
+                chatHistory: runMessages,
+                chartPayloads: plottingOutput.chartPayloads,
+                lastMsgId: plottingOutput.lastChartMessageId ?? summaryMessageId
+            )
+            ctx.emitEvent(
+                phase: "physics_summary",
+                step: physicsSummary == nil ? "no_output" : "completed"
+            )
+
+            try await store.loadRuns(forThread: sourceRun.threadId)
+            return try await store.fetchRun(id: variant.id)
+        } catch {
+            lastError = error.localizedDescription
+            if (try? await store.fetchRun(id: variant.id).status) != .failed {
+                try? await finalizeFailure(
+                    ctx: ctx,
+                    diagnostics: error.localizedDescription,
+                    lastMsgId: requestMessage.id
+                )
+            }
+            throw error
+        }
+    }
+
     // MARK: - Stage 1: Guide
 
     private func runGuideStage(
@@ -1235,6 +1390,91 @@ final class OrchestratorService: ObservableObject {
     }
 
     // MARK: - Helper: Build Configuration Dict
+
+    private func buildParameterizedSpec(
+        from spec: SimulationSpec,
+        runId: String,
+        request: ParameterizedRerunRequest
+    ) -> SimulationSpec {
+        SimulationSpec(
+            runId: runId,
+            pythiaTag: spec.pythiaTag,
+            seed: request.seed,
+            beams: spec.beams,
+            processSettings: spec.processSettings,
+            cutsSettings: cutsSettings(
+                spec.cutsSettings,
+                replacingPTHatMinWith: request.pTHatMin
+            ),
+            eventCount: request.eventCount,
+            observables: spec.observables,
+            analysisPlan: spec.analysisPlan,
+            outputPlan: spec.outputPlan
+        )
+    }
+
+    private func buildIntent(from spec: SimulationSpec, prompt: String) -> IntentResult {
+        IntentResult(
+            processHint: spec.processSettings.first ?? "",
+            beamFrame: spec.beams.frameType,
+            eCmGev: spec.beams.eCmGev,
+            eventCount: spec.eventCount,
+            observables: spec.observables.map(\.id),
+            requestedAnalysisCandidates: [spec.analysisPlan?.family ?? AnalysisFamily.chargedMultiplicity.rawValue],
+            prompt: prompt
+        )
+    }
+
+    private func cutsSettings(
+        _ settings: [String],
+        replacingPTHatMinWith pTHatMin: Double?
+    ) -> [String] {
+        var updated = settings.filter { !isPTHatMinSetting($0) }
+        if let pTHatMin {
+            updated.append("PhaseSpace:pTHatMin = \(formattedCutValue(pTHatMin) ?? "\(pTHatMin)")")
+        }
+        return updated
+    }
+
+    private func parameterChangeSummary(
+        sourceSpec: SimulationSpec,
+        modifiedSpec: SimulationSpec
+    ) -> [String] {
+        var changes: [String] = [
+            "event_count: \(sourceSpec.eventCount) -> \(modifiedSpec.eventCount)",
+            "seed: \(sourceSpec.seed) -> \(modifiedSpec.seed)"
+        ]
+
+        let sourcePTHat = formattedCutValue(phaseSpacePTHatMin(in: sourceSpec.cutsSettings)) ?? "unset"
+        let modifiedPTHat = formattedCutValue(phaseSpacePTHatMin(in: modifiedSpec.cutsSettings)) ?? "unset"
+        if sourcePTHat != modifiedPTHat {
+            changes.append("PhaseSpace:pTHatMin: \(sourcePTHat) -> \(modifiedPTHat)")
+        }
+
+        return changes
+    }
+
+    private func phaseSpacePTHatMin(in settings: [String]) -> Double? {
+        for setting in settings where isPTHatMinSetting(setting) {
+            let parts = setting.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if parts.count == 2, let value = Double(parts[1]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func isPTHatMinSetting(_ setting: String) -> Bool {
+        let key = setting.split(separator: "=", maxSplits: 1).first.map(String.init) ?? setting
+        return key.trimmingCharacters(in: .whitespacesAndNewlines) == "PhaseSpace:pTHatMin"
+    }
+
+    private func formattedCutValue(_ value: Double?) -> String? {
+        guard let value else { return nil }
+        return String(format: "%.6g", value)
+    }
 
     private func validatedIntent(_ intent: IntentResult, originalPrompt: String) -> IntentResult {
         let fallback = buildFallbackIntent(from: originalPrompt)
