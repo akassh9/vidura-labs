@@ -2392,6 +2392,7 @@ private struct RunBundleExportResult: Identifiable {
     let id = UUID()
     let bundleURL: URL
     let entries: [RunBundleExporter.BundleArtifact]
+    let missingArtifacts: [RunBundleExporter.MissingArtifact]
     let missingExpectedArtifacts: [String]
 }
 
@@ -2410,6 +2411,18 @@ private enum RunBundleExporter {
         }
     }
 
+    struct MissingArtifact: Codable {
+        let label: String
+        let kind: String
+        let sourcePath: String
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case kind
+            case sourcePath = "source_path"
+        }
+    }
+
     private struct BundleManifest: Codable {
         let formatVersion: Int
         let exportedAt: String
@@ -2417,9 +2430,11 @@ private enum RunBundleExporter {
         let threadId: String
         let run: RunSummary
         let configuration: [String: String]
+        let simulationSpec: [String: String]
         let summaryMetrics: [String: String]
         let charts: [ChartSummary]
         let artifacts: [BundleArtifact]
+        let missingArtifacts: [MissingArtifact]
         let missingExpectedArtifacts: [String]
 
         enum CodingKeys: String, CodingKey {
@@ -2429,9 +2444,11 @@ private enum RunBundleExporter {
             case threadId = "thread_id"
             case run
             case configuration
+            case simulationSpec = "simulation_spec"
             case summaryMetrics = "summary_metrics"
             case charts
             case artifacts
+            case missingArtifacts = "missing_artifacts"
             case missingExpectedArtifacts = "missing_expected_artifacts"
         }
     }
@@ -2496,6 +2513,16 @@ private enum RunBundleExporter {
         var usedRelativePaths = Set<String>()
         var copiedArtifacts: [BundleArtifact] = []
         let existingArtifacts = artifacts.filter { fm.fileExists(atPath: $0.relativePath) }
+        let missingArtifacts = artifacts
+            .filter { !fm.fileExists(atPath: $0.relativePath) }
+            .sorted(by: artifactSort)
+            .map {
+                MissingArtifact(
+                    label: $0.label,
+                    kind: $0.kind,
+                    sourcePath: $0.relativePath
+                )
+            }
 
         for artifact in existingArtifacts.sorted(by: artifactSort) {
             let sourceURL = URL(fileURLWithPath: artifact.relativePath)
@@ -2518,7 +2545,8 @@ private enum RunBundleExporter {
 
         let copiedNames = Set(copiedArtifacts.map { URL(fileURLWithPath: $0.path).lastPathComponent })
         let missingExpectedArtifacts = expectedArtifactNames.filter { !copiedNames.contains($0) }
-        let summaryMetrics = summaryMetrics(from: bundleURL.appendingPathComponent("summary.json"))
+        let simulationSpec = flattenedJSONValues(from: bundleURL.appendingPathComponent("simulation_spec.json"))
+        let summaryMetrics = flattenedJSONValues(from: bundleURL.appendingPathComponent("summary.json"))
         let chartSummaries = chartPayloads.map { chart in
             ChartSummary(
                 title: chart.title,
@@ -2545,18 +2573,22 @@ private enum RunBundleExporter {
                 completedAt: run.completedAt
             ),
             configuration: run.configuration,
+            simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
             missingExpectedArtifacts: missingExpectedArtifacts
         )
 
         try writeJSON(manifest, to: bundleURL.appendingPathComponent("manifest.json"))
         try runReport(
             run: run,
+            simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
             missingExpectedArtifacts: missingExpectedArtifacts
         ).write(
             to: bundleURL.appendingPathComponent("run_report.md"),
@@ -2567,6 +2599,7 @@ private enum RunBundleExporter {
         return RunBundleExportResult(
             bundleURL: bundleURL,
             entries: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
             missingExpectedArtifacts: missingExpectedArtifacts
         )
     }
@@ -2638,7 +2671,7 @@ private enum RunBundleExporter {
         try data.write(to: url, options: .atomic)
     }
 
-    private static func summaryMetrics(from url: URL) -> [String: String] {
+    private static func flattenedJSONValues(from url: URL) -> [String: String] {
         guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) else {
             return [:]
@@ -2675,9 +2708,11 @@ private enum RunBundleExporter {
 
     private static func runReport(
         run: SimulationRun,
+        simulationSpec: [String: String],
         summaryMetrics: [String: String],
         charts: [ChartSummary],
         artifacts: [BundleArtifact],
+        missingArtifacts: [MissingArtifact],
         missingExpectedArtifacts: [String]
     ) -> String {
         var lines: [String] = []
@@ -2713,6 +2748,17 @@ private enum RunBundleExporter {
         }
 
         lines.append("")
+        lines.append("## Simulation Spec")
+        lines.append("")
+        if simulationSpec.isEmpty {
+            lines.append("No simulation spec metadata was available.")
+        } else {
+            for key in simulationSpec.keys.sorted() {
+                lines.append("- `\(key)`: \(simulationSpec[key] ?? "")")
+            }
+        }
+
+        lines.append("")
         lines.append("## Summary Metrics")
         lines.append("")
         if summaryMetrics.isEmpty {
@@ -2742,6 +2788,15 @@ private enum RunBundleExporter {
         } else {
             for artifact in artifacts {
                 lines.append("- `\(artifact.path)` (\(artifact.kind), \(artifact.byteSize) bytes)")
+            }
+        }
+
+        if !missingArtifacts.isEmpty {
+            lines.append("")
+            lines.append("## Missing Artifact References")
+            lines.append("")
+            for artifact in missingArtifacts {
+                lines.append("- `\(artifact.label)` (\(artifact.kind)) expected at `\(artifact.sourcePath)`")
             }
         }
 
