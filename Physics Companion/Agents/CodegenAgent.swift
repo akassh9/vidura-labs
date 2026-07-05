@@ -39,7 +39,8 @@ enum CodegenAgent {
         let source = generateSource(
             settings: settings,
             family: family,
-            eventCount: spec.eventCount
+            eventCount: spec.eventCount,
+            extraFiles: spec.outputPlan.extraFiles
         )
 
         return GeneratedCode(
@@ -54,7 +55,8 @@ enum CodegenAgent {
     private static func generateSource(
         settings: [String],
         family: AnalysisFamily,
-        eventCount: Int
+        eventCount: Int,
+        extraFiles: [String]
     ) -> String {
         let includes = """
         #include <cmath>
@@ -71,6 +73,7 @@ enum CodegenAgent {
         }.joined(separator: "\n")
 
         let analysisCode = sourceForFamily(family)
+        let secondaryCode = secondaryCode(for: extraFiles, primaryFamily: family)
 
         return """
         \(includes)
@@ -86,22 +89,27 @@ enum CodegenAgent {
 
             int generatedEvents = 0;
         \(analysisCode.declarations)
+        \(secondaryCode.declarations)
 
             for (int iEvent = 0; iEvent < \(eventCount); ++iEvent) {
                 if (!pythia.next()) continue;
                 ++generatedEvents;
         \(analysisCode.eventLoop)
+        \(secondaryCode.eventLoop)
             }
 
         \(analysisCode.finalize)
+        \(secondaryCode.finalize)
 
             // Write summary_lines.txt
             std::ofstream summary("summary_lines.txt");
             summary << "generated_events=" << generatedEvents << std::endl;
         \(analysisCode.summaryLines)
+        \(secondaryCode.summaryLines)
             summary.close();
 
         \(analysisCode.extraOutput)
+        \(secondaryCode.extraOutput)
 
             pythia.stat();
             return 0;
@@ -134,6 +142,97 @@ enum CodegenAgent {
         case .eventScalars:
             return eventScalarsCode()
         }
+    }
+
+    private static func secondaryCode(for extraFiles: [String], primaryFamily: AnalysisFamily) -> FamilyCode {
+        var declarations: [String] = []
+        var eventLoop: [String] = []
+        var summaryLines: [String] = []
+        var extraOutput: [String] = []
+
+        if extraFiles.contains("hist_pt.txt"), primaryFamily != .ptSpectrum {
+            declarations.append("""
+                Hist secondaryPtHist("pT spectrum", 80, 0.0, 200.0);
+                double secondaryPtTotal = 0.0;
+                int secondaryPtCount = 0;
+            """)
+            eventLoop.append("""
+                    for (int i = 0; i < pythia.event.size(); ++i) {
+                        if (pythia.event[i].isFinal() && pythia.event[i].isCharged()) {
+                            double pT = pythia.event[i].pT();
+                            secondaryPtHist.fill(pT);
+                            secondaryPtTotal += pT;
+                            ++secondaryPtCount;
+                        }
+                    }
+            """)
+            summaryLines.append("""
+                summary << "mean_pt=" << (secondaryPtCount > 0 ? secondaryPtTotal / secondaryPtCount : 0) << std::endl;
+            """)
+            extraOutput.append("""
+                std::ofstream histPtFile("hist_pt.txt");
+                secondaryPtHist.table(histPtFile, false, false);
+                histPtFile.close();
+            """)
+        }
+
+        if extraFiles.contains("hist_eta.txt"), primaryFamily != .etaRapidity {
+            declarations.append("""
+                Hist secondaryEtaHist("eta distribution", 80, -8.0, 8.0);
+                double secondaryEtaAbsTotal = 0.0;
+                int secondaryEtaCount = 0;
+            """)
+            eventLoop.append("""
+                    for (int i = 0; i < pythia.event.size(); ++i) {
+                        if (pythia.event[i].isFinal() && pythia.event[i].isCharged()) {
+                            double eta = pythia.event[i].eta();
+                            secondaryEtaHist.fill(eta);
+                            secondaryEtaAbsTotal += std::abs(eta);
+                            ++secondaryEtaCount;
+                        }
+                    }
+            """)
+            summaryLines.append("""
+                summary << "mean_abs_eta=" << (secondaryEtaCount > 0 ? secondaryEtaAbsTotal / secondaryEtaCount : 0) << std::endl;
+            """)
+            extraOutput.append("""
+                std::ofstream histEtaFile("hist_eta.txt");
+                secondaryEtaHist.table(histEtaFile, false, false);
+                histEtaFile.close();
+            """)
+        }
+
+        if extraFiles.contains("hist_multiplicity.txt"), primaryFamily != .chargedMultiplicity {
+            declarations.append("""
+                Hist secondaryChargedHist("charged multiplicity", 100, -0.5, 799.5);
+                double secondaryChargedTotal = 0.0;
+            """)
+            eventLoop.append("""
+                    int secondaryNCharged = 0;
+                    for (int i = 0; i < pythia.event.size(); ++i) {
+                        if (pythia.event[i].isFinal() && pythia.event[i].isCharged())
+                            ++secondaryNCharged;
+                    }
+                    secondaryChargedTotal += secondaryNCharged;
+                    secondaryChargedHist.fill(secondaryNCharged);
+            """)
+            summaryLines.append("""
+                summary << "mean_charged=" << (generatedEvents > 0 ? secondaryChargedTotal / generatedEvents : 0) << std::endl;
+            """)
+            extraOutput.append("""
+                std::ofstream histMultiplicityFile("hist_multiplicity.txt");
+                secondaryChargedHist.table(histMultiplicityFile, false, false);
+                histMultiplicityFile.close();
+            """)
+        }
+
+        return FamilyCode(
+            declarations: declarations.joined(separator: "\n"),
+            eventLoop: eventLoop.joined(separator: "\n"),
+            finalize: "",
+            summaryLines: summaryLines.joined(separator: "\n"),
+            extraOutput: extraOutput.joined(separator: "\n")
+        )
     }
 
     // MARK: charged_multiplicity

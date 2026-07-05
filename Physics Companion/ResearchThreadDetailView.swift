@@ -1846,6 +1846,9 @@ private struct RunEvidenceCard: View {
     @State private var selectedArtifact: ArtifactRef?
     @State private var isRerunning = false
     @State private var rerunError: String?
+    @State private var variantDraft: ParameterizedRerunDraft?
+    @State private var isRunningVariant = false
+    @State private var variantError: String?
     @State private var isExporting = false
     @State private var exportResult: RunBundleExportResult?
     @State private var exportError: String?
@@ -1915,6 +1918,22 @@ private struct RunEvidenceCard: View {
                 .controlSize(.small)
                 .disabled(!canRerunExact)
                 .help("Rerun Exact")
+
+                Button {
+                    prepareParameterizedRerun()
+                } label: {
+                    if isRunningVariant {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!canRunVariant)
+                .help("Parameterized Rerun")
 
                 Button {
                     exportRunBundle()
@@ -2017,6 +2036,16 @@ private struct RunEvidenceCard: View {
         .sheet(item: $selectedArtifact) { artifact in
             ArtifactViewer(title: run.title, artifact: artifact)
         }
+        .sheet(item: $variantDraft) { draft in
+            ParameterizedRerunSheet(
+                draft: draft,
+                isRunning: isRunningVariant,
+                onCancel: { variantDraft = nil },
+                onRun: { request in
+                    runParameterizedVariant(request)
+                }
+            )
+        }
         .alert(
             "Exact Rerun Failed",
             isPresented: Binding(
@@ -2027,6 +2056,17 @@ private struct RunEvidenceCard: View {
             Button("OK", role: .cancel) { rerunError = nil }
         } message: {
             Text(rerunError ?? "")
+        }
+        .alert(
+            "Parameterized Rerun Failed",
+            isPresented: Binding(
+                get: { variantError != nil },
+                set: { if !$0 { variantError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { variantError = nil }
+        } message: {
+            Text(variantError ?? "")
         }
         .alert(item: $exportResult) { result in
             Alert(
@@ -2057,6 +2097,10 @@ private struct RunEvidenceCard: View {
         run.status == .completed && !isRerunning && !orchestrator.isRunning
     }
 
+    private var canRunVariant: Bool {
+        run.status == .completed && !isRunningVariant && !orchestrator.isRunning
+    }
+
     private var canExportRunBundle: Bool {
         run.status == .completed && !isExporting && !artifacts.isEmpty
     }
@@ -2074,6 +2118,45 @@ private struct RunEvidenceCard: View {
             }
             isRerunning = false
         }
+    }
+
+    private func prepareParameterizedRerun() {
+        guard canRunVariant else { return }
+
+        do {
+            let spec = try loadSimulationSpec()
+            variantDraft = ParameterizedRerunDraft(run: run, sourceSpec: spec)
+            variantError = nil
+        } catch {
+            variantError = error.localizedDescription
+        }
+    }
+
+    private func runParameterizedVariant(_ request: ParameterizedRerunRequest) {
+        guard canRunVariant else { return }
+        isRunningVariant = true
+        variantError = nil
+        variantDraft = nil
+
+        Task {
+            do {
+                _ = try await orchestrator.rerunParameterized(run: run, request: request)
+            } catch {
+                variantError = error.localizedDescription
+            }
+            isRunningVariant = false
+        }
+    }
+
+    private func loadSimulationSpec() throws -> SimulationSpec {
+        guard let artifact = artifacts.first(where: {
+            URL(fileURLWithPath: $0.relativePath).lastPathComponent == "simulation_spec.json"
+        }) else {
+            throw OrchestratorError.rerunUnavailable("Missing simulation_spec.json evidence for parameterized rerun.")
+        }
+
+        let data = try Data(contentsOf: URL(fileURLWithPath: artifact.relativePath))
+        return try JSONDecoder().decode(SimulationSpec.self, from: data)
     }
 
     private func exportRunBundle() {
@@ -2109,6 +2192,197 @@ private struct RunEvidenceCard: View {
             }
             isExporting = false
         }
+    }
+}
+
+private struct ParameterizedRerunDraft: Identifiable {
+    let id = UUID()
+    let run: SimulationRun
+    let eventCount: Int
+    let seed: Int
+    let pTHatMin: Double?
+
+    init(run: SimulationRun, sourceSpec: SimulationSpec) {
+        self.run = run
+        self.eventCount = sourceSpec.eventCount
+        self.seed = sourceSpec.seed
+        self.pTHatMin = Self.phaseSpacePTHatMin(in: sourceSpec.cutsSettings)
+    }
+
+    private static func phaseSpacePTHatMin(in settings: [String]) -> Double? {
+        for setting in settings {
+            let parts = setting.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard parts.count == 2,
+                  parts[0] == "PhaseSpace:pTHatMin",
+                  let value = Double(parts[1]) else {
+                continue
+            }
+            return value
+        }
+        return nil
+    }
+}
+
+private struct ParameterizedRerunSheet: View {
+    let draft: ParameterizedRerunDraft
+    let isRunning: Bool
+    let onCancel: () -> Void
+    let onRun: (ParameterizedRerunRequest) -> Void
+
+    @State private var eventCountText: String
+    @State private var seedText: String
+    @State private var includePTHatMin: Bool
+    @State private var pTHatMinText: String
+
+    init(
+        draft: ParameterizedRerunDraft,
+        isRunning: Bool,
+        onCancel: @escaping () -> Void,
+        onRun: @escaping (ParameterizedRerunRequest) -> Void
+    ) {
+        self.draft = draft
+        self.isRunning = isRunning
+        self.onCancel = onCancel
+        self.onRun = onRun
+        _eventCountText = State(initialValue: "\(draft.eventCount)")
+        _seedText = State(initialValue: "\(draft.seed)")
+        _includePTHatMin = State(initialValue: draft.pTHatMin != nil)
+        _pTHatMinText = State(initialValue: draft.pTHatMin.map { Self.format($0) } ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Parameterized Rerun")
+                        .font(.headline)
+                    Text(draft.run.id)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+            }
+
+            Form {
+                LabeledContent("Event count") {
+                    TextField("Event count", text: $eventCountText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                }
+
+                LabeledContent("Random seed") {
+                    HStack(spacing: 6) {
+                        TextField("Random seed", text: $seedText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 140)
+                        Button {
+                            seedText = "\(Int.random(in: 1...900_000_000))"
+                        } label: {
+                            Image(systemName: "die.face.5")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("New Random Seed")
+                    }
+                }
+
+                Toggle("PhaseSpace:pTHatMin", isOn: $includePTHatMin)
+
+                if includePTHatMin {
+                    LabeledContent("pT-hat minimum") {
+                        TextField("GeV", text: $pTHatMinText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 140)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isRunning)
+
+                Button {
+                    if let request {
+                        onRun(request)
+                    }
+                } label: {
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 16, height: 16)
+                    } else {
+                        Text("Run Variant")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isRunning || request == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private var request: ParameterizedRerunRequest? {
+        guard let eventCount = Int(eventCountText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1...50_000).contains(eventCount),
+              let seed = Int(seedText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1...900_000_000).contains(seed) else {
+            return nil
+        }
+
+        let pTHatMin: Double?
+        if includePTHatMin {
+            guard let parsed = Double(pTHatMinText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  parsed >= 0 else {
+                return nil
+            }
+            pTHatMin = parsed
+        } else {
+            pTHatMin = nil
+        }
+
+        return ParameterizedRerunRequest(
+            eventCount: eventCount,
+            seed: seed,
+            pTHatMin: pTHatMin
+        )
+    }
+
+    private var validationMessage: String? {
+        let trimmedEventCount = eventCountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSeed = seedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if Int(trimmedEventCount).map({ !(1...50_000).contains($0) }) ?? true {
+            return "Event count must be between 1 and 50,000."
+        }
+        if Int(trimmedSeed).map({ !(1...900_000_000).contains($0) }) ?? true {
+            return "Random seed must be between 1 and 900,000,000."
+        }
+        if includePTHatMin {
+            let trimmedPTHat = pTHatMinText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if Double(trimmedPTHat).map({ $0 < 0 }) ?? true {
+                return "PhaseSpace:pTHatMin must be non-negative."
+            }
+        }
+        return nil
+    }
+
+    private static func format(_ value: Double) -> String {
+        String(format: "%.6g", value)
     }
 }
 
