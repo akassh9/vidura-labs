@@ -1348,7 +1348,12 @@ private struct RunsConfigurationPanel: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(simulationRuns) { run in
-                            RunEvidenceCard(run: run)
+                            RunEvidenceCard(
+                                run: run,
+                                chartPayloads: messages
+                                    .filter { $0.originRunId == run.id }
+                                    .compactMap(\.chartPayload)
+                            )
                         }
                     }
                     .padding(12)
@@ -1837,9 +1842,13 @@ private struct RunComparison {
 private struct RunEvidenceCard: View {
     @EnvironmentObject private var orchestrator: OrchestratorService
     let run: SimulationRun
+    let chartPayloads: [ChartPayload]
     @State private var selectedArtifact: ArtifactRef?
     @State private var isRerunning = false
     @State private var rerunError: String?
+    @State private var isExporting = false
+    @State private var exportResult: RunBundleExportResult?
+    @State private var exportError: String?
 
     private var artifacts: [ArtifactRef] {
         RunEvidenceResolver.artifacts(for: run)
@@ -1906,6 +1915,22 @@ private struct RunEvidenceCard: View {
                 .controlSize(.small)
                 .disabled(!canRerunExact)
                 .help("Rerun Exact")
+
+                Button {
+                    exportRunBundle()
+                } label: {
+                    if isExporting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!canExportRunBundle)
+                .help("Export Run Bundle")
 
                 Text("\(artifacts.count) artifacts")
                     .font(.caption2)
@@ -2003,10 +2028,37 @@ private struct RunEvidenceCard: View {
         } message: {
             Text(rerunError ?? "")
         }
+        .alert(item: $exportResult) { result in
+            Alert(
+                title: Text("Run Bundle Exported"),
+                message: Text(result.bundleURL.path),
+                primaryButton: .default(Text("Reveal")) {
+                    RunEvidenceActions.reveal(url: result.bundleURL)
+                },
+                secondaryButton: .default(Text("Copy Path")) {
+                    RunEvidenceActions.copy(result.bundleURL.path)
+                }
+            )
+        }
+        .alert(
+            "Export Failed",
+            isPresented: Binding(
+                get: { exportError != nil },
+                set: { if !$0 { exportError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
     }
 
     private var canRerunExact: Bool {
         run.status == .completed && !isRerunning && !orchestrator.isRunning
+    }
+
+    private var canExportRunBundle: Bool {
+        run.status == .completed && !isExporting && !artifacts.isEmpty
     }
 
     private func rerunExact() {
@@ -2021,6 +2073,41 @@ private struct RunEvidenceCard: View {
                 rerunError = error.localizedDescription
             }
             isRerunning = false
+        }
+    }
+
+    private func exportRunBundle() {
+        guard canExportRunBundle else { return }
+
+        let panel = NSOpenPanel()
+        panel.title = "Export Run Bundle"
+        panel.message = "Choose a folder where Vidura Labs should create the run bundle."
+        panel.prompt = "Export"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let parentURL = panel.url else {
+            return
+        }
+
+        isExporting = true
+        exportError = nil
+
+        Task {
+            do {
+                let result = try RunBundleExporter.export(
+                    run: run,
+                    artifacts: artifacts,
+                    chartPayloads: chartPayloads,
+                    toParentDirectory: parentURL
+                )
+                exportResult = result
+            } catch {
+                exportError = error.localizedDescription
+            }
+            isExporting = false
         }
     }
 }
@@ -2298,6 +2385,432 @@ private enum RunEvidenceActions {
         } else {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }
+    }
+}
+
+private struct RunBundleExportResult: Identifiable {
+    let id = UUID()
+    let bundleURL: URL
+    let entries: [RunBundleExporter.BundleArtifact]
+    let missingArtifacts: [RunBundleExporter.MissingArtifact]
+    let missingExpectedArtifacts: [String]
+}
+
+private enum RunBundleExporter {
+    struct BundleArtifact: Codable {
+        let label: String
+        let kind: String
+        let path: String
+        let byteSize: UInt64
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case kind
+            case path
+            case byteSize = "byte_size"
+        }
+    }
+
+    struct MissingArtifact: Codable {
+        let label: String
+        let kind: String
+        let sourcePath: String
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case kind
+            case sourcePath = "source_path"
+        }
+    }
+
+    private struct BundleManifest: Codable {
+        let formatVersion: Int
+        let exportedAt: String
+        let appName: String
+        let threadId: String
+        let run: RunSummary
+        let configuration: [String: String]
+        let simulationSpec: [String: String]
+        let summaryMetrics: [String: String]
+        let charts: [ChartSummary]
+        let artifacts: [BundleArtifact]
+        let missingArtifacts: [MissingArtifact]
+        let missingExpectedArtifacts: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case formatVersion = "format_version"
+            case exportedAt = "exported_at"
+            case appName = "app_name"
+            case threadId = "thread_id"
+            case run
+            case configuration
+            case simulationSpec = "simulation_spec"
+            case summaryMetrics = "summary_metrics"
+            case charts
+            case artifacts
+            case missingArtifacts = "missing_artifacts"
+            case missingExpectedArtifacts = "missing_expected_artifacts"
+        }
+    }
+
+    private struct RunSummary: Codable {
+        let id: String
+        let title: String
+        let status: String
+        let eventCount: Int?
+        let crossSection: Double?
+        let createdAt: String
+        let updatedAt: String
+        let completedAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case title
+            case status
+            case eventCount = "event_count"
+            case crossSection = "cross_section"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+            case completedAt = "completed_at"
+        }
+    }
+
+    private struct ChartSummary: Codable {
+        let title: String
+        let chartType: String
+        let seriesCount: Int
+        let pointCount: Int
+        let metricCount: Int
+
+        enum CodingKeys: String, CodingKey {
+            case title
+            case chartType = "chart_type"
+            case seriesCount = "series_count"
+            case pointCount = "point_count"
+            case metricCount = "metric_count"
+        }
+    }
+
+    private static let expectedArtifactNames = [
+        "run.cc",
+        "simulation_spec.json",
+        "summary.json",
+        "summary_lines.txt",
+        "compile.log",
+        "run.log"
+    ]
+
+    static func export(
+        run: SimulationRun,
+        artifacts: [ArtifactRef],
+        chartPayloads: [ChartPayload],
+        toParentDirectory parentURL: URL
+    ) throws -> RunBundleExportResult {
+        let fm = FileManager.default
+        let bundleURL = try uniqueBundleURL(parentURL: parentURL, run: run)
+        try fm.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        var usedRelativePaths = Set<String>()
+        var copiedArtifacts: [BundleArtifact] = []
+        let existingArtifacts = artifacts.filter { fm.fileExists(atPath: $0.relativePath) }
+        let missingArtifacts = artifacts
+            .filter { !fm.fileExists(atPath: $0.relativePath) }
+            .sorted(by: artifactSort)
+            .map {
+                MissingArtifact(
+                    label: $0.label,
+                    kind: $0.kind,
+                    sourcePath: $0.relativePath
+                )
+            }
+
+        for artifact in existingArtifacts.sorted(by: artifactSort) {
+            let sourceURL = URL(fileURLWithPath: artifact.relativePath)
+            let relativePath = uniqueRelativePath(
+                preferredFileName: sourceURL.lastPathComponent,
+                usedRelativePaths: &usedRelativePaths
+            )
+            let destinationURL = bundleURL.appendingPathComponent(relativePath)
+            try fm.copyItem(at: sourceURL, to: destinationURL)
+
+            copiedArtifacts.append(
+                BundleArtifact(
+                    label: artifact.label,
+                    kind: artifact.kind,
+                    path: relativePath,
+                    byteSize: fileSize(for: destinationURL)
+                )
+            )
+        }
+
+        let copiedNames = Set(copiedArtifacts.map { URL(fileURLWithPath: $0.path).lastPathComponent })
+        let missingExpectedArtifacts = expectedArtifactNames.filter { !copiedNames.contains($0) }
+        let simulationSpec = flattenedJSONValues(from: bundleURL.appendingPathComponent("simulation_spec.json"))
+        let summaryMetrics = flattenedJSONValues(from: bundleURL.appendingPathComponent("summary.json"))
+        let chartSummaries = chartPayloads.map { chart in
+            ChartSummary(
+                title: chart.title,
+                chartType: chart.chartType.rawValue,
+                seriesCount: chart.series.count,
+                pointCount: chart.series.reduce(0) { $0 + $1.points.count },
+                metricCount: chart.metrics.count
+            )
+        }
+
+        let manifest = BundleManifest(
+            formatVersion: 1,
+            exportedAt: ISO8601DateFormatter().string(from: Date()),
+            appName: "Vidura Labs",
+            threadId: run.threadId,
+            run: RunSummary(
+                id: run.id,
+                title: run.title,
+                status: run.status.rawValue,
+                eventCount: run.eventCount,
+                crossSection: run.crossSection,
+                createdAt: run.createdAt,
+                updatedAt: run.updatedAt,
+                completedAt: run.completedAt
+            ),
+            configuration: run.configuration,
+            simulationSpec: simulationSpec,
+            summaryMetrics: summaryMetrics,
+            charts: chartSummaries,
+            artifacts: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
+            missingExpectedArtifacts: missingExpectedArtifacts
+        )
+
+        try writeJSON(manifest, to: bundleURL.appendingPathComponent("manifest.json"))
+        try runReport(
+            run: run,
+            simulationSpec: simulationSpec,
+            summaryMetrics: summaryMetrics,
+            charts: chartSummaries,
+            artifacts: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
+            missingExpectedArtifacts: missingExpectedArtifacts
+        ).write(
+            to: bundleURL.appendingPathComponent("run_report.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        return RunBundleExportResult(
+            bundleURL: bundleURL,
+            entries: copiedArtifacts,
+            missingArtifacts: missingArtifacts,
+            missingExpectedArtifacts: missingExpectedArtifacts
+        )
+    }
+
+    private static func uniqueBundleURL(parentURL: URL, run: SimulationRun) throws -> URL {
+        let fm = FileManager.default
+        let title = sanitizedFileName(run.title)
+        let shortId = String(run.id.prefix(8))
+        let baseName = title.isEmpty
+            ? "vidura-run-\(shortId)"
+            : "vidura-run-\(title)-\(shortId)"
+
+        var candidate = parentURL.appendingPathComponent(baseName, isDirectory: true)
+        var suffix = 2
+        while fm.fileExists(atPath: candidate.path) {
+            candidate = parentURL.appendingPathComponent("\(baseName)-\(suffix)", isDirectory: true)
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private static func sanitizedFileName(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let pieces = value
+            .lowercased()
+            .components(separatedBy: allowed.inverted)
+            .filter { !$0.isEmpty }
+        return String(pieces.joined(separator: "-").prefix(48))
+    }
+
+    private nonisolated static func artifactSort(_ lhs: ArtifactRef, _ rhs: ArtifactRef) -> Bool {
+        if lhs.label != rhs.label {
+            return lhs.label < rhs.label
+        }
+        return lhs.relativePath < rhs.relativePath
+    }
+
+    private static func uniqueRelativePath(
+        preferredFileName: String,
+        usedRelativePaths: inout Set<String>
+    ) -> String {
+        let url = URL(fileURLWithPath: preferredFileName)
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        var candidate = preferredFileName
+        var suffix = 2
+
+        while usedRelativePaths.contains(candidate) {
+            candidate = ext.isEmpty ? "\(baseName)-\(suffix)" : "\(baseName)-\(suffix).\(ext)"
+            suffix += 1
+        }
+
+        usedRelativePaths.insert(candidate)
+        return candidate
+    }
+
+    private static func fileSize(for url: URL) -> UInt64 {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return 0
+        }
+        return size.uint64Value
+    }
+
+    private static func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(value)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private static func flattenedJSONValues(from url: URL) -> [String: String] {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return [:]
+        }
+        return flattenSummaryMetrics(object)
+    }
+
+    private static func flattenSummaryMetrics(_ value: Any, prefix: String = "") -> [String: String] {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [:]) { result, pair in
+                let key = prefix.isEmpty ? pair.key : "\(prefix).\(pair.key)"
+                result.merge(flattenSummaryMetrics(pair.value, prefix: key), uniquingKeysWith: { _, new in new })
+            }
+        }
+
+        if let array = value as? [Any] {
+            return [prefix: "\(array.count) items"]
+        }
+
+        if let number = value as? NSNumber {
+            return [prefix: number.stringValue]
+        }
+
+        if let string = value as? String {
+            return [prefix: string]
+        }
+
+        if value is NSNull {
+            return [prefix: "null"]
+        }
+
+        return [prefix: String(describing: value)]
+    }
+
+    private static func runReport(
+        run: SimulationRun,
+        simulationSpec: [String: String],
+        summaryMetrics: [String: String],
+        charts: [ChartSummary],
+        artifacts: [BundleArtifact],
+        missingArtifacts: [MissingArtifact],
+        missingExpectedArtifacts: [String]
+    ) -> String {
+        var lines: [String] = []
+        lines.append("# Vidura Run Bundle")
+        lines.append("")
+        lines.append("## Run")
+        lines.append("")
+        lines.append("- Title: \(run.title)")
+        lines.append("- Run ID: \(run.id)")
+        lines.append("- Thread ID: \(run.threadId)")
+        lines.append("- Status: \(run.status.displayName)")
+        if let eventCount = run.eventCount {
+            lines.append("- Event count: \(eventCount)")
+        }
+        if let crossSection = run.crossSection {
+            lines.append("- Cross section: \(crossSection)")
+        }
+        lines.append("- Created: \(run.createdAt)")
+        lines.append("- Updated: \(run.updatedAt)")
+        if let completedAt = run.completedAt {
+            lines.append("- Completed: \(completedAt)")
+        }
+
+        lines.append("")
+        lines.append("## Configuration")
+        lines.append("")
+        if run.configuration.isEmpty {
+            lines.append("No run configuration was persisted.")
+        } else {
+            for key in run.configuration.keys.sorted() {
+                lines.append("- `\(key)`: \(run.configuration[key] ?? "")")
+            }
+        }
+
+        lines.append("")
+        lines.append("## Simulation Spec")
+        lines.append("")
+        if simulationSpec.isEmpty {
+            lines.append("No simulation spec metadata was available.")
+        } else {
+            for key in simulationSpec.keys.sorted() {
+                lines.append("- `\(key)`: \(simulationSpec[key] ?? "")")
+            }
+        }
+
+        lines.append("")
+        lines.append("## Summary Metrics")
+        lines.append("")
+        if summaryMetrics.isEmpty {
+            lines.append("No summary metrics were available.")
+        } else {
+            for key in summaryMetrics.keys.sorted() {
+                lines.append("- `\(key)`: \(summaryMetrics[key] ?? "")")
+            }
+        }
+
+        lines.append("")
+        lines.append("## Charts")
+        lines.append("")
+        if charts.isEmpty {
+            lines.append("No chart payloads were available in the current thread context.")
+        } else {
+            for chart in charts {
+                lines.append("- \(chart.title): \(chart.pointCount) points across \(chart.seriesCount) series")
+            }
+        }
+
+        lines.append("")
+        lines.append("## Artifacts")
+        lines.append("")
+        if artifacts.isEmpty {
+            lines.append("No artifact files were copied.")
+        } else {
+            for artifact in artifacts {
+                lines.append("- `\(artifact.path)` (\(artifact.kind), \(artifact.byteSize) bytes)")
+            }
+        }
+
+        if !missingArtifacts.isEmpty {
+            lines.append("")
+            lines.append("## Missing Artifact References")
+            lines.append("")
+            for artifact in missingArtifacts {
+                lines.append("- `\(artifact.label)` (\(artifact.kind)) expected at `\(artifact.sourcePath)`")
+            }
+        }
+
+        if !missingExpectedArtifacts.isEmpty {
+            lines.append("")
+            lines.append("## Missing Expected Artifacts")
+            lines.append("")
+            for name in missingExpectedArtifacts {
+                lines.append("- `\(name)`")
+            }
+        }
+
+        lines.append("")
+        return lines.joined(separator: "\n")
     }
 }
 
