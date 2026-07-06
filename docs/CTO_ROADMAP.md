@@ -46,9 +46,6 @@ Completed:
 - Duplicate run with modified event count/seed/cuts.
 - Surface run lineage and one-click Compare to Source for exact reruns and
   variants.
-
-Needed:
-
 - Add regression coverage for the reproducibility loop before expanding the
   physics feature surface.
 
@@ -58,12 +55,12 @@ Goal: generated analyses are correct enough to trust for exploratory work.
 
 Needed:
 
+- Deterministic run-quality checks for low statistics, missing artifacts,
+  suspicious cut/process combinations, and artifact/spec mismatches.
 - Better intent-to-analysis planning for multiple observables.
 - Hard validation gates for generated C++.
 - Explicit warnings for biased samples and cut choices.
 - Known-good templates for common HEP workflows.
-- Unit or regression tests around deterministic planning, plotting, and summary
-  parsing.
 
 ### Phase 3: Become A Research Workspace
 
@@ -79,14 +76,13 @@ Needed:
 
 ## Current Next Slice
 
-Reproducibility Regression Harness.
+Run Quality / Sanity Checks.
 
-Why: the app now has the core reproducibility product loop: evidence,
-multi-chart artifacts, exact rerun, parameterized rerun, compare, export, and
-lineage. Those contracts are tightly coupled across SwiftUI, orchestration,
-runner artifacts, generated specs, and local SQLite fixtures. Before adding more
-physics breadth, lock the deterministic contracts down with a focused harness
-that future agents can run without manual GUI clicking.
+Why: the app can now produce, replay, compare, export, trace, and regression-test
+the run record. The next trust gap is physics quality: a completed run can still
+be too low-statistics, missing declared outputs, biased by cuts, or internally
+inconsistent. Add a deterministic quality layer that inspects evidence and tells
+the user what is trustworthy, what is limited, and what should be rerun.
 
 ## GitHub Operating Model
 

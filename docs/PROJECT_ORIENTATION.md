@@ -95,14 +95,14 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add a focused reproducibility regression harness around deterministic
-   planning/codegen, summary parsing, run lineage, artifact/export contracts,
-   and the existing smoke fixtures.
+1. Add deterministic Run Quality / Sanity Checks that inspect completed run
+   specs, summaries, logs, and artifacts for missing outputs, low statistics,
+   biased sample/cut choices, and obvious analysis-contract drift.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of
    delete/recreate semantics.
 4. Decide where the line should sit between OpenAI-driven codegen and the
    deterministic `CodegenAgent` fallback.
-5. Add focused tests around deterministic agents, summary parsing,
-   policy/physics checks, and store migrations before expanding analyses.
+5. Promote the script regression harness into a formal test target once the
+   Xcode project structure can absorb that without churn.

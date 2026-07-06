@@ -217,58 +217,89 @@ Run Lineage & Reproducibility Surface:
     immediate source `CC4B3F6C-83A1-44EB-9EBA-70FB6B995ACE`.
   - Known residual gap: no manual native UI click-through in the merge review.
 
+Reproducibility Regression Harness:
+
+- PR #10: `https://github.com/akassh9/vidura-labs/pull/10`
+- Merged at `e71c587f09ea6f8204e63a73c227357a7ab72749`.
+- Added repeatable regression command:
+  - `./script/reproducibility_regression.sh`
+- Confirmed `xcodebuild -list -project "Vidura Labs.xcodeproj"` shows one app
+  target/scheme and no existing test target, so this slice uses a project-local
+  script harness instead of XCTest.
+- Extracted pure helpers:
+  - `RunnerSummaryParser` backs `RunnerService.parseSummaryLines`.
+  - `RunLineageResolver` backs the Run Evidence / Run Compare lineage UI through
+    a small SwiftUI adapter in `ResearchThreadDetailView.swift`.
+- Harness coverage:
+  - `RunnerService.parseSummaryLines` integer, floating-point, string, trimming,
+    and malformed-line behavior.
+  - deterministic `CodegenAgent.run(spec:)` output for event count, seed,
+    `PhaseSpace:pTHatMin`, `hist_primary.txt`, and `hist_pt.txt`.
+  - lineage classification for original, explicit exact rerun, variant,
+    historical inferred exact rerun, and source/derived relationship context.
+- Review validation before merge:
+  - `xcodebuild -list -project "Vidura Labs.xcodeproj"` succeeded.
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `git diff --check` passed.
+  - Tracked-file and strict secret-value scans were clean.
+- Known residual gap: export manifest assembly remains UI-adjacent inside
+  `RunBundleExporter` and is not covered by the first harness.
+
 ## Next Product Slice
 
-Reproducibility Regression Harness.
+Run Quality / Sanity Checks.
 
-Why this next: the reproducible run loop now exists, but it spans several
-fragile contracts: deterministic specs, deterministic C++ fallback, runner
-artifact parsing, evidence discovery, export manifests, lineage inference, and
-Run Compare. Before adding broader HEP analysis features, add a focused test or
-script harness so future agents can change those contracts without relying only
-on manual smoke runs.
+Why this next: the run record is now reproducible and regression-tested. The
+next trust problem is not another workflow action; it is whether a completed
+Pythia run is scientifically usable. The app should flag low statistics, missing
+declared outputs, suspicious cuts/processes, and artifact/spec mismatches before
+the user treats a chart or summary as reliable.
 
 ## Recommended Implementation
 
-Start by auditing the current Xcode project. There is no established test target
-as of this handoff, so choose the smallest maintainable path:
+Keep the first slice deterministic and evidence-driven. Do not add a schema
+migration unless the existing artifacts/config/message model cannot support the
+surface.
 
 Suggested shape:
 
-- Prefer a real XCTest target if it can be added cleanly without destabilizing
-  the project file.
-- If an XCTest target is too much churn for one slice, add a project-local
-  verification script that exercises pure Swift or fixture-level contracts and
-  can be promoted into XCTest later.
-- Extract pure helpers only where useful for testability. Do not broadly refactor
-  `ResearchThreadDetailView.swift` just to make the file smaller.
-- Cover at least these contracts:
-  - `RunnerService.parseSummaryLines` behavior for existing summary lines.
-  - deterministic `CodegenAgent.run(spec:)` output for event count, seed,
-    `PhaseSpace:pTHatMin`, `hist_primary.txt`, and `hist_pt.txt`;
-  - run-lineage resolution for original, variant, new exact rerun, and historical
-    inferred exact rerun fixtures;
-  - export manifest expectations for a completed smoke fixture if the exporter
-    can be reached without GUI interaction.
-- If necessary, move `RunLineageResolver` or exporter manifest assembly into a
-  small non-view helper so it can be tested without rendering SwiftUI.
-- Keep runtime behavior unchanged unless a test exposes a real bug.
+- Add a small pure `RunQualityAnalyzer` or similarly named helper that accepts a
+  run/spec/summary/artifact/log snapshot and returns structured findings.
+- Severity levels should be simple: info, warning, error.
+- First checks should include:
+  - completed run has `run.cc`, `simulation_spec.json`, `summary.json`,
+    `summary_lines.txt`, `compile.log`, `run.log`, and declared plot/table files;
+  - `summary.json` event counts agree with the run event count when present;
+  - event count is below a useful exploratory threshold;
+  - requested output files are missing or empty;
+  - histogram overflow counters are nonzero when visible in summary data;
+  - hard-process or `PhaseSpace:pTHatMin` cuts are present while the run title or
+    analysis family implies inclusive/minimum-bias interpretation;
+  - run/compile logs contain obvious failure or warning markers despite completed
+    status.
+- Surface findings compactly in Run Evidence. Keep it dense and operational.
+- Include quality findings in Export Run Bundle if it is straightforward without
+  broad exporter refactor.
+- Add harness coverage to `./script/reproducibility_regression.sh` for the pure
+  quality analyzer.
+- Do not call OpenAI from the analyzer or export path.
 
 ## Acceptance Criteria
 
-- The repo has a repeatable regression command for deterministic reproducibility
-  contracts.
-- The harness does not require clicking the macOS UI.
-- The harness can run from a clean checkout with the normal local Pythia/OpenAI
-  setup and ignored `.env`; it must not print secrets.
-- The harness uses fixtures or pure functions where practical, not live OpenAI
-  calls.
-- Existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, and
-  Lineage behavior still builds and launches.
+- Completed Run Evidence cards show deterministic quality findings when relevant.
+- A clean completed run with all expected evidence shows an explicit low-noise
+  pass/healthy state.
+- Fixture or harness cases cover missing artifact, low event count, pTHatMin/cut
+  warning, and event-count mismatch.
+- The analyzer is pure enough to run from `./script/reproducibility_regression.sh`.
+- Export behavior is unchanged, or quality metadata is added deterministically if
+  included.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
-- Any added test command succeeds, or the PR clearly explains why no formal test
-  target was added in this slice.
+- `./script/reproducibility_regression.sh` succeeds.
 - Branch is pushed and a PR is opened against `akassh9/vidura-labs/main`.
 
 ## Useful Commands
@@ -278,6 +309,7 @@ git remote -v
 git status --short --branch
 ./script/build_and_run.sh build
 ./script/build_and_run.sh --verify
+./script/reproducibility_regression.sh
 pgrep -x "Vidura Labs"
 ```
 
