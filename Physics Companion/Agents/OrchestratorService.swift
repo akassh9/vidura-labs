@@ -396,10 +396,13 @@ final class OrchestratorService: ObservableObject {
             ? String(sourceRun.title.dropFirst("Exact rerun: ".count))
             : sourceRun.title
 
+        var configuration = buildConfigurationDict(from: spec)
+        configuration["Vidura:exactRerunOfRunID"] = sourceRun.id
+
         let rerun = try await store.createRun(
             threadId: sourceRun.threadId,
             title: "Exact rerun: \(baseTitle)",
-            configuration: buildConfigurationDict(from: spec)
+            configuration: configuration
         )
 
         let ctx = OrchestratorRunContext(
