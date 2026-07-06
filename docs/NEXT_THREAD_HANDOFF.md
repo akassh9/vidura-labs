@@ -1,6 +1,6 @@
 # Next Thread Handoff
 
-Date: 2026-07-04
+Date: 2026-07-06
 Active repo: `https://github.com/akassh9/vidura-labs`
 Canonical local workspace: `/Users/akash009/vidura`
 
@@ -186,54 +186,89 @@ Parameterized Rerun:
   - `git diff --check` passed.
   - Tracked-file and diff secret scans were clean.
 
+Run Lineage & Reproducibility Surface:
+
+- PR #8: `https://github.com/akassh9/vidura-labs/pull/8`
+- Merged at `9d5f5e8cb8b968f62dd63a22d928e7cc20d46535`.
+- New exact reruns record source-run provenance in configuration:
+  - `Vidura:exactRerunOfRunID`
+- Variants resolve source runs and changes from:
+  - `Vidura:variantOfRunID`
+  - `Vidura:variantChanges`
+- Historical exact reruns infer source relationships from request messages like
+  `Rerun exact from run <id>` when the source run still exists in the thread.
+- Run Evidence cards now show a compact reproducibility row:
+  original/exact rerun/variant, source short ID, inferred marker, and variant
+  changes when present.
+- Derived completed runs expose Compare to Source, which switches to Run Compare
+  and preselects source as A and derived as B.
+- Run Compare now shows relationship context for source/derived pairs.
+- Review validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `git diff --check` passed.
+  - Tracked-file and diff secret scans were clean.
+- Fixture checks:
+  - Variant `B28DBDBC-B49D-4F40-AC6B-7F85113744B1` resolves to source
+    `55C18C16-54E4-4A3C-BFFE-DEEE030A7459` with `event_count 10000 -> 200`,
+    `seed 625434 -> 13579`, and `PhaseSpace:pTHatMin unset -> 18.5`.
+  - Historical exact rerun `98CA353A-941B-4B5A-B6A6-070D89FDE59F` infers
+    immediate source `CC4B3F6C-83A1-44EB-9EBA-70FB6B995ACE`.
+  - Known residual gap: no manual native UI click-through in the merge review.
+
 ## Next Product Slice
 
-Run Lineage & Reproducibility Surface.
+Reproducibility Regression Harness.
 
-Why this next: exact rerun, parameterized rerun, compare, and export now work,
-but they are still separate actions. A user needs to see how runs relate: which
-run is the source, which are exact reruns, which are variants, what changed, and
-what comparison/export action makes sense next.
+Why this next: the reproducible run loop now exists, but it spans several
+fragile contracts: deterministic specs, deterministic C++ fallback, runner
+artifact parsing, evidence discovery, export manifests, lineage inference, and
+Run Compare. Before adding broader HEP analysis features, add a focused test or
+script harness so future agents can change those contracts without relying only
+on manual smoke runs.
 
 ## Recommended Implementation
 
-Keep this slice inside the current data model unless a hard blocker appears.
-Use existing configuration keys, titles, messages, and evidence to infer
-lineage. Add schema only if the existing run/message/artifact data cannot support
-the UI.
+Start by auditing the current Xcode project. There is no established test target
+as of this handoff, so choose the smallest maintainable path:
 
 Suggested shape:
 
-- Add a `RunLineageResolver` near the Run Evidence/Compare code or as a small
-  local helper.
-- Detect variant relationships from `Vidura:variantOfRunID`.
-- Add exact-rerun provenance going forward by setting a configuration key such
-  as `Vidura:exactRerunOfRunID` inside `OrchestratorService.rerunExact(run:)`.
-- For historical exact reruns, infer cautiously from the request message
-  `Rerun exact from run <id>` when available.
-- In Run Evidence cards, show a compact reproducibility row:
-  - source run short ID,
-  - type: original, exact rerun, or variant,
-  - variant changes when present.
-- Add a direct "Compare to Source" action for exact reruns and variants. It
-  should switch the side panel to Compare and preselect source + derived run.
-- In Run Compare, surface relationship context when the selected pair is a
-  source/derived pair.
-- Keep Export Run Bundle and both rerun actions working.
+- Prefer a real XCTest target if it can be added cleanly without destabilizing
+  the project file.
+- If an XCTest target is too much churn for one slice, add a project-local
+  verification script that exercises pure Swift or fixture-level contracts and
+  can be promoted into XCTest later.
+- Extract pure helpers only where useful for testability. Do not broadly refactor
+  `ResearchThreadDetailView.swift` just to make the file smaller.
+- Cover at least these contracts:
+  - `RunnerService.parseSummaryLines` behavior for existing summary lines.
+  - deterministic `CodegenAgent.run(spec:)` output for event count, seed,
+    `PhaseSpace:pTHatMin`, `hist_primary.txt`, and `hist_pt.txt`;
+  - run-lineage resolution for original, variant, new exact rerun, and historical
+    inferred exact rerun fixtures;
+  - export manifest expectations for a completed smoke fixture if the exporter
+    can be reached without GUI interaction.
+- If necessary, move `RunLineageResolver` or exporter manifest assembly into a
+  small non-view helper so it can be tested without rendering SwiftUI.
+- Keep runtime behavior unchanged unless a test exposes a real bug.
 
 ## Acceptance Criteria
 
-- Variants show their source run and parameter changes in the Evidence surface.
-- New exact reruns record their source run in configuration.
-- Historical exact reruns still show a best-effort source relationship when it
-  can be inferred from existing messages.
-- Derived runs have a one-click Compare to Source path.
-- Run Compare labels source/derived relationships when applicable.
-- Existing Evidence and Compare behavior still works.
-- Existing Exact Rerun, Parameterized Rerun, and Export Run Bundle behavior
-  still works.
+- The repo has a repeatable regression command for deterministic reproducibility
+  contracts.
+- The harness does not require clicking the macOS UI.
+- The harness can run from a clean checkout with the normal local Pythia/OpenAI
+  setup and ignored `.env`; it must not print secrets.
+- The harness uses fixtures or pure functions where practical, not live OpenAI
+  calls.
+- Existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, and
+  Lineage behavior still builds and launches.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
+- Any added test command succeeds, or the PR clearly explains why no formal test
+  target was added in this slice.
 - Branch is pushed and a PR is opened against `akassh9/vidura-labs/main`.
 
 ## Useful Commands

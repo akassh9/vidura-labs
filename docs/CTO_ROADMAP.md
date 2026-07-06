@@ -1,6 +1,6 @@
 # CTO Roadmap
 
-Date: 2026-07-04
+Date: 2026-07-06
 
 ## Product Thesis
 
@@ -44,10 +44,13 @@ Completed:
 - Compare two runs side by side.
 - Export a run bundle with source, logs, summary, charts, and metadata.
 - Duplicate run with modified event count/seed/cuts.
+- Surface run lineage and one-click Compare to Source for exact reruns and
+  variants.
 
 Needed:
 
-- Promote exact rerun and compare into a tighter reproducibility workflow.
+- Add regression coverage for the reproducibility loop before expanding the
+  physics feature surface.
 
 ### Phase 2: Raise Physics Quality
 
@@ -76,13 +79,14 @@ Needed:
 
 ## Current Next Slice
 
-Run Lineage & Reproducibility Surface.
+Reproducibility Regression Harness.
 
-Why: the app now has the core reproducibility actions: exact rerun,
-parameterized rerun, compare, and export. They still behave like separate
-buttons. The next product step is to make run relationships visible and
-navigable so a user can answer: what is this run derived from, what changed, and
-what should I compare or export next?
+Why: the app now has the core reproducibility product loop: evidence,
+multi-chart artifacts, exact rerun, parameterized rerun, compare, export, and
+lineage. Those contracts are tightly coupled across SwiftUI, orchestration,
+runner artifacts, generated specs, and local SQLite fixtures. Before adding more
+physics breadth, lock the deterministic contracts down with a focused harness
+that future agents can run without manual GUI clicking.
 
 ## GitHub Operating Model
 
