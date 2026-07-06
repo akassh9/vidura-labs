@@ -207,39 +207,7 @@ enum RunnerService {
     /// Accepts both "key=value" and "key value" formats.
     /// Values are parsed as int, then float, then string.
     static func parseSummaryLines(_ content: String) -> [String: Any] {
-        var result: [String: Any] = [:]
-        let lines = content.components(separatedBy: .newlines)
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-
-            let parts: [String]
-            if trimmed.contains("=") {
-                parts = trimmed.components(separatedBy: "=")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-            } else {
-                parts = trimmed.components(separatedBy: .whitespaces)
-                    .filter { !$0.isEmpty }
-            }
-
-            guard parts.count >= 2 else { continue }
-            let key = parts[0]
-            let valueStr = parts.dropFirst().joined(separator: " ")
-
-            // Try int
-            if let intVal = Int(valueStr) {
-                result[key] = intVal
-            }
-            // Try float
-            else if let doubleVal = Double(valueStr) {
-                result[key] = doubleVal
-            }
-            // Raw string
-            else {
-                result[key] = valueStr
-            }
-        }
-        return result
+        RunnerSummaryParser.parse(content)
     }
 
     // MARK: - Process Execution

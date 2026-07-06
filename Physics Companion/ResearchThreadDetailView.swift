@@ -1348,7 +1348,7 @@ private struct RunsConfigurationPanel: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(simulationRuns) { run in
-                            let lineage = RunLineageResolver.lineage(
+                            let lineage = RunLineageAdapter.lineage(
                                 for: run,
                                 in: simulationRuns,
                                 messages: messages
@@ -1727,7 +1727,7 @@ private struct RunComparison {
         self.rightCharts = messages
             .filter { $0.originRunId == right.id }
             .compactMap(\.chartPayload)
-        self.relationshipContext = RunLineageResolver.relationship(
+        self.relationshipContext = RunLineageAdapter.relationship(
             between: left,
             and: right,
             in: allRuns,
@@ -1899,28 +1899,6 @@ private struct RunComparison {
     }
 }
 
-private enum RunLineageKind {
-    case original
-    case exactRerun
-    case variant
-
-    var displayName: String {
-        switch self {
-        case .original: return "Original"
-        case .exactRerun: return "Exact rerun"
-        case .variant: return "Variant"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .original: return "record.circle"
-        case .exactRerun: return "arrow.trianglehead.clockwise"
-        case .variant: return "slider.horizontal.3"
-        }
-    }
-}
-
 private struct RunLineage {
     let kind: RunLineageKind
     let sourceRunId: String?
@@ -1948,53 +1926,23 @@ private struct RunLineagePairContext {
     }
 }
 
-private enum RunLineageResolver {
-    private static let exactRerunSourceKey = "Vidura:exactRerunOfRunID"
-    private static let variantSourceKey = "Vidura:variantOfRunID"
-    private static let variantChangesKey = "Vidura:variantChanges"
-    private static let exactRerunMessagePrefix = "Rerun exact from run "
-
+private enum RunLineageAdapter {
     static func lineage(
         for run: SimulationRun,
         in runs: [SimulationRun],
         messages: [ChatMessage]
     ) -> RunLineage {
-        if let sourceRunId = normalized(run.configuration[variantSourceKey]) {
-            return RunLineage(
-                kind: .variant,
-                sourceRunId: sourceRunId,
-                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
-                changes: changes(from: run.configuration[variantChangesKey]),
-                isInferred: false
-            )
-        }
-
-        if let sourceRunId = normalized(run.configuration[exactRerunSourceKey]) {
-            return RunLineage(
-                kind: .exactRerun,
-                sourceRunId: sourceRunId,
-                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
-                changes: [],
-                isInferred: false
-            )
-        }
-
-        if let sourceRunId = inferredExactRerunSourceID(for: run, in: runs, messages: messages) {
-            return RunLineage(
-                kind: .exactRerun,
-                sourceRunId: sourceRunId,
-                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
-                changes: [],
-                isInferred: true
-            )
-        }
-
+        let classification = RunLineageResolver.classification(
+            for: run.lineageSnapshot,
+            in: runs.map(\.lineageSnapshot),
+            messages: messages.map(\.lineageSnapshot)
+        )
         return RunLineage(
-            kind: .original,
-            sourceRunId: nil,
-            sourceRun: nil,
-            changes: [],
-            isInferred: false
+            kind: classification.kind,
+            sourceRunId: classification.sourceRunId,
+            sourceRun: classification.sourceRunId.flatMap { sourceRun(for: $0, derivedRun: run, in: runs) },
+            changes: classification.changes,
+            isInferred: classification.isInferred
         )
     }
 
@@ -2004,56 +1952,37 @@ private enum RunLineageResolver {
         in runs: [SimulationRun],
         messages: [ChatMessage]
     ) -> RunLineagePairContext? {
-        let leftLineage = lineage(for: left, in: runs, messages: messages)
-        if leftLineage.sourceRunId == right.id {
-            return RunLineagePairContext(
-                kind: leftLineage.kind,
-                sourceRun: right,
-                derivedRun: left,
-                sourceLabel: "B",
-                derivedLabel: "A",
-                changes: leftLineage.changes,
-                isInferred: leftLineage.isInferred
-            )
-        }
-
-        let rightLineage = lineage(for: right, in: runs, messages: messages)
-        if rightLineage.sourceRunId == left.id {
-            return RunLineagePairContext(
-                kind: rightLineage.kind,
-                sourceRun: left,
-                derivedRun: right,
-                sourceLabel: "A",
-                derivedLabel: "B",
-                changes: rightLineage.changes,
-                isInferred: rightLineage.isInferred
-            )
-        }
-
-        return nil
-    }
-
-    static func shortID(_ id: String) -> String {
-        String(id.prefix(8))
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
+        guard let relationship = RunLineageResolver.relationship(
+            between: left.lineageSnapshot,
+            and: right.lineageSnapshot,
+            in: runs.map(\.lineageSnapshot),
+            messages: messages.map(\.lineageSnapshot)
+        ),
+        let sourceRun = runs.first(where: { $0.id == relationship.sourceRunId }),
+        let derivedRun = runs.first(where: { $0.id == relationship.derivedRunId }) else {
             return nil
         }
-        return value
-    }
 
-    private static func changes(from value: String?) -> [String] {
-        guard let value = normalized(value) else { return [] }
-        return value
-            .split(separator: ";")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        return RunLineagePairContext(
+            kind: relationship.kind,
+            sourceRun: sourceRun,
+            derivedRun: derivedRun,
+            sourceLabel: relationship.sourceLabel,
+            derivedLabel: relationship.derivedLabel,
+            changes: relationship.changes,
+            isInferred: relationship.isInferred
+        )
     }
+}
 
-    private static func sourceRun(
+private extension SimulationRun {
+    var lineageSnapshot: RunLineageRunSnapshot {
+        RunLineageRunSnapshot(id: id, configuration: configuration)
+    }
+}
+
+private extension RunLineageAdapter {
+    static func sourceRun(
         for sourceRunId: String,
         derivedRun: SimulationRun,
         in runs: [SimulationRun]
@@ -2061,40 +1990,11 @@ private enum RunLineageResolver {
         guard sourceRunId != derivedRun.id else { return nil }
         return runs.first { $0.id == sourceRunId }
     }
+}
 
-    private static func inferredExactRerunSourceID(
-        for run: SimulationRun,
-        in runs: [SimulationRun],
-        messages: [ChatMessage]
-    ) -> String? {
-        for message in messages where message.originRunId == run.id {
-            guard let sourceRunId = exactRerunSourceID(from: message.content),
-                  sourceRunId != run.id,
-                  runs.contains(where: { $0.id == sourceRunId }) else {
-                continue
-            }
-            return sourceRunId
-        }
-        return nil
-    }
-
-    private static func exactRerunSourceID(from content: String) -> String? {
-        guard let range = content.range(of: exactRerunMessagePrefix, options: .caseInsensitive) else {
-            return nil
-        }
-
-        let tail = String(content[range.upperBound...])
-        guard let candidate = tail.split(whereSeparator: { character in
-            !(character.isLetter || character.isNumber || character == "-")
-        }).first else {
-            return nil
-        }
-
-        let sourceRunId = String(candidate)
-        guard sourceRunId.count >= 8 else {
-            return nil
-        }
-        return sourceRunId
+private extension ChatMessage {
+    var lineageSnapshot: RunLineageMessageSnapshot {
+        RunLineageMessageSnapshot(content: content, originRunId: originRunId)
     }
 }
 
