@@ -1348,11 +1348,22 @@ private struct RunsConfigurationPanel: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(simulationRuns) { run in
+                            let lineage = RunLineageResolver.lineage(
+                                for: run,
+                                in: simulationRuns,
+                                messages: messages
+                            )
                             RunEvidenceCard(
                                 run: run,
                                 chartPayloads: messages
                                     .filter { $0.originRunId == run.id }
-                                    .compactMap(\.chartPayload)
+                                    .compactMap(\.chartPayload),
+                                lineage: lineage,
+                                onCompareToSource: { sourceRunId, derivedRunId in
+                                    compareLeftRunId = sourceRunId
+                                    compareRightRunId = derivedRunId
+                                    selectedMode = .compare
+                                }
                             )
                         }
                     }
@@ -1362,6 +1373,7 @@ private struct RunsConfigurationPanel: View {
                 RunComparePanel(
                     completedRuns: completedSimulationRuns,
                     messages: messages,
+                    allRuns: simulationRuns,
                     leftRunId: $compareLeftRunId,
                     rightRunId: $compareRightRunId
                 )
@@ -1395,6 +1407,7 @@ private enum RunSidePanelMode: String, CaseIterable, Identifiable {
 private struct RunComparePanel: View {
     let completedRuns: [SimulationRun]
     let messages: [ChatMessage]
+    let allRuns: [SimulationRun]
     @Binding var leftRunId: String?
     @Binding var rightRunId: String?
 
@@ -1408,7 +1421,12 @@ private struct RunComparePanel: View {
 
     private var comparison: RunComparison? {
         guard let leftRun, let rightRun else { return nil }
-        return RunComparison(left: leftRun, right: rightRun, messages: messages)
+        return RunComparison(
+            left: leftRun,
+            right: rightRun,
+            messages: messages,
+            allRuns: allRuns
+        )
     }
 
     var body: some View {
@@ -1537,6 +1555,10 @@ private struct RunCompareSummaryCard: View {
                 MetricChip(label: "Charts", value: "\(comparison.leftCharts.count)/\(comparison.rightCharts.count)")
                 MetricChip(label: "Artifacts", value: "\(comparison.leftArtifacts.count)/\(comparison.rightArtifacts.count)")
             }
+
+            if let context = comparison.relationshipContext {
+                RunCompareLineageContext(context: context)
+            }
         }
         .padding(10)
         .background(
@@ -1546,6 +1568,37 @@ private struct RunCompareSummaryCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct RunCompareLineageContext: View {
+    let context: RunLineagePairContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Image(systemName: context.kind.iconName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(context.summaryText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if !context.changes.isEmpty {
+                Text(context.changes.joined(separator: "; "))
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.08))
         )
     }
 }
@@ -1661,8 +1714,9 @@ private struct RunComparison {
     let rightArtifacts: [ArtifactRef]
     let leftCharts: [ChartPayload]
     let rightCharts: [ChartPayload]
+    let relationshipContext: RunLineagePairContext?
 
-    init(left: SimulationRun, right: SimulationRun, messages: [ChatMessage]) {
+    init(left: SimulationRun, right: SimulationRun, messages: [ChatMessage], allRuns: [SimulationRun]) {
         self.left = left
         self.right = right
         self.leftArtifacts = RunEvidenceResolver.artifacts(for: left)
@@ -1673,6 +1727,12 @@ private struct RunComparison {
         self.rightCharts = messages
             .filter { $0.originRunId == right.id }
             .compactMap(\.chartPayload)
+        self.relationshipContext = RunLineageResolver.relationship(
+            between: left,
+            and: right,
+            in: allRuns,
+            messages: messages
+        )
     }
 
     var identityRows: [RunCompareRow] {
@@ -1839,10 +1899,261 @@ private struct RunComparison {
     }
 }
 
+private enum RunLineageKind {
+    case original
+    case exactRerun
+    case variant
+
+    var displayName: String {
+        switch self {
+        case .original: return "Original"
+        case .exactRerun: return "Exact rerun"
+        case .variant: return "Variant"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .original: return "record.circle"
+        case .exactRerun: return "arrow.trianglehead.clockwise"
+        case .variant: return "slider.horizontal.3"
+        }
+    }
+}
+
+private struct RunLineage {
+    let kind: RunLineageKind
+    let sourceRunId: String?
+    let sourceRun: SimulationRun?
+    let changes: [String]
+    let isInferred: Bool
+
+    var isDerived: Bool {
+        sourceRunId != nil
+    }
+}
+
+private struct RunLineagePairContext {
+    let kind: RunLineageKind
+    let sourceRun: SimulationRun
+    let derivedRun: SimulationRun
+    let sourceLabel: String
+    let derivedLabel: String
+    let changes: [String]
+    let isInferred: Bool
+
+    var summaryText: String {
+        let confidence = isInferred ? " inferred" : ""
+        return "\(kind.displayName)\(confidence): \(derivedLabel) \(RunLineageResolver.shortID(derivedRun.id)) from \(sourceLabel) \(RunLineageResolver.shortID(sourceRun.id))"
+    }
+}
+
+private enum RunLineageResolver {
+    private static let exactRerunSourceKey = "Vidura:exactRerunOfRunID"
+    private static let variantSourceKey = "Vidura:variantOfRunID"
+    private static let variantChangesKey = "Vidura:variantChanges"
+    private static let exactRerunMessagePrefix = "Rerun exact from run "
+
+    static func lineage(
+        for run: SimulationRun,
+        in runs: [SimulationRun],
+        messages: [ChatMessage]
+    ) -> RunLineage {
+        if let sourceRunId = normalized(run.configuration[variantSourceKey]) {
+            return RunLineage(
+                kind: .variant,
+                sourceRunId: sourceRunId,
+                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
+                changes: changes(from: run.configuration[variantChangesKey]),
+                isInferred: false
+            )
+        }
+
+        if let sourceRunId = normalized(run.configuration[exactRerunSourceKey]) {
+            return RunLineage(
+                kind: .exactRerun,
+                sourceRunId: sourceRunId,
+                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
+                changes: [],
+                isInferred: false
+            )
+        }
+
+        if let sourceRunId = inferredExactRerunSourceID(for: run, in: runs, messages: messages) {
+            return RunLineage(
+                kind: .exactRerun,
+                sourceRunId: sourceRunId,
+                sourceRun: sourceRun(for: sourceRunId, derivedRun: run, in: runs),
+                changes: [],
+                isInferred: true
+            )
+        }
+
+        return RunLineage(
+            kind: .original,
+            sourceRunId: nil,
+            sourceRun: nil,
+            changes: [],
+            isInferred: false
+        )
+    }
+
+    static func relationship(
+        between left: SimulationRun,
+        and right: SimulationRun,
+        in runs: [SimulationRun],
+        messages: [ChatMessage]
+    ) -> RunLineagePairContext? {
+        let leftLineage = lineage(for: left, in: runs, messages: messages)
+        if leftLineage.sourceRunId == right.id {
+            return RunLineagePairContext(
+                kind: leftLineage.kind,
+                sourceRun: right,
+                derivedRun: left,
+                sourceLabel: "B",
+                derivedLabel: "A",
+                changes: leftLineage.changes,
+                isInferred: leftLineage.isInferred
+            )
+        }
+
+        let rightLineage = lineage(for: right, in: runs, messages: messages)
+        if rightLineage.sourceRunId == left.id {
+            return RunLineagePairContext(
+                kind: rightLineage.kind,
+                sourceRun: left,
+                derivedRun: right,
+                sourceLabel: "A",
+                derivedLabel: "B",
+                changes: rightLineage.changes,
+                isInferred: rightLineage.isInferred
+            )
+        }
+
+        return nil
+    }
+
+    static func shortID(_ id: String) -> String {
+        String(id.prefix(8))
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private static func changes(from value: String?) -> [String] {
+        guard let value = normalized(value) else { return [] }
+        return value
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func sourceRun(
+        for sourceRunId: String,
+        derivedRun: SimulationRun,
+        in runs: [SimulationRun]
+    ) -> SimulationRun? {
+        guard sourceRunId != derivedRun.id else { return nil }
+        return runs.first { $0.id == sourceRunId }
+    }
+
+    private static func inferredExactRerunSourceID(
+        for run: SimulationRun,
+        in runs: [SimulationRun],
+        messages: [ChatMessage]
+    ) -> String? {
+        for message in messages where message.originRunId == run.id {
+            guard let sourceRunId = exactRerunSourceID(from: message.content),
+                  sourceRunId != run.id,
+                  runs.contains(where: { $0.id == sourceRunId }) else {
+                continue
+            }
+            return sourceRunId
+        }
+        return nil
+    }
+
+    private static func exactRerunSourceID(from content: String) -> String? {
+        guard let range = content.range(of: exactRerunMessagePrefix, options: .caseInsensitive) else {
+            return nil
+        }
+
+        let tail = String(content[range.upperBound...])
+        guard let candidate = tail.split(whereSeparator: { character in
+            !(character.isLetter || character.isNumber || character == "-")
+        }).first else {
+            return nil
+        }
+
+        let sourceRunId = String(candidate)
+        guard sourceRunId.count >= 8 else {
+            return nil
+        }
+        return sourceRunId
+    }
+}
+
+private struct RunReproducibilityRow: View {
+    let lineage: RunLineage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: lineage.kind.iconName)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 12)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(lineage.kind.displayName)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+
+                    if let sourceRunId = lineage.sourceRunId {
+                        Text("from \(RunLineageResolver.shortID(sourceRunId))")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if lineage.isInferred {
+                        Text("inferred")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if !lineage.changes.isEmpty {
+                    Text(lineage.changes.joined(separator: "; "))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+}
+
 private struct RunEvidenceCard: View {
     @EnvironmentObject private var orchestrator: OrchestratorService
     let run: SimulationRun
     let chartPayloads: [ChartPayload]
+    let lineage: RunLineage
+    let onCompareToSource: (String, String) -> Void
     @State private var selectedArtifact: ArtifactRef?
     @State private var isRerunning = false
     @State private var rerunError: String?
@@ -1951,11 +2262,25 @@ private struct RunEvidenceCard: View {
                 .disabled(!canExportRunBundle)
                 .help("Export Run Bundle")
 
+                if lineage.isDerived {
+                    Button {
+                        compareToSource()
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(!canCompareToSource)
+                    .help("Compare to Source")
+                }
+
                 Text("\(artifacts.count) artifacts")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
             }
+
+            RunReproducibilityRow(lineage: lineage)
 
             if run.configuration.isEmpty {
                 Text("No configuration")
@@ -2105,6 +2430,10 @@ private struct RunEvidenceCard: View {
         run.status == .completed && !isExporting && !artifacts.isEmpty
     }
 
+    private var canCompareToSource: Bool {
+        run.status == .completed && lineage.sourceRun?.status == .completed
+    }
+
     private func rerunExact() {
         guard canRerunExact else { return }
         isRerunning = true
@@ -2146,6 +2475,14 @@ private struct RunEvidenceCard: View {
             }
             isRunningVariant = false
         }
+    }
+
+    private func compareToSource() {
+        guard canCompareToSource,
+              let sourceRunId = lineage.sourceRun?.id else {
+            return
+        }
+        onCompareToSource(sourceRunId, run.id)
     }
 
     private func loadSimulationSpec() throws -> SimulationSpec {
