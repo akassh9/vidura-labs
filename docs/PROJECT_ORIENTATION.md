@@ -47,6 +47,10 @@ Persistence is local SQLite through GRDB under Application Support:
 
 Generated simulation artifacts are stored under
 `~/Library/Application Support/com.AL.PhysicsCompanion/simulations/<run-id>/`.
+Completed runs can now be inspected through Run Evidence, exported as a run
+bundle, rerun exactly from persisted source/spec, rerun as a controlled
+parameterized variant, compared side by side, and traced back to source runs
+through the lineage/reproducibility surface.
 
 ## Runtime Pipeline
 
@@ -91,8 +95,9 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Tighten the exact rerun, compare, export, and parameterized-rerun workflow
-   into one reproducibility surface.
+1. Add a focused reproducibility regression harness around deterministic
+   planning/codegen, summary parsing, run lineage, artifact/export contracts,
+   and the existing smoke fixtures.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of
