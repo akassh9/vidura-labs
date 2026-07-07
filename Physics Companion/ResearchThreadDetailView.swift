@@ -2076,6 +2076,10 @@ private struct RunEvidenceCard: View {
         RunEvidenceResolver.runFolderURL(for: run, artifacts: artifacts)
     }
 
+    private var qualityFindings: [RunQualityFinding] {
+        RunQualityAdapter.findings(for: run, artifacts: artifacts)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -2215,6 +2219,10 @@ private struct RunEvidenceCard: View {
                         MetricChip(label: "σ", value: String(format: "%.3g mb", sigma))
                     }
                 }
+            }
+
+            if run.status == .completed {
+                RunQualityFindingsView(findings: qualityFindings)
             }
 
             Divider()
@@ -2691,12 +2699,243 @@ private struct ArtifactEvidenceRow: View {
     }
 }
 
+private struct RunQualityFindingsView: View {
+    let findings: [RunQualityFinding]
+
+    private var errorCount: Int {
+        findings.filter { $0.severity == .error }.count
+    }
+
+    private var warningCount: Int {
+        findings.filter { $0.severity == .warning }.count
+    }
+
+    private var visibleFindings: [RunQualityFinding] {
+        Array(findings.prefix(5))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: headerIcon)
+                    .font(.caption2)
+                    .foregroundStyle(headerColor)
+                Text("Run Quality")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if errorCount > 0 {
+                    MetricChip(label: "Errors", value: "\(errorCount)")
+                }
+                if warningCount > 0 {
+                    MetricChip(label: "Warnings", value: "\(warningCount)")
+                }
+            }
+
+            VStack(spacing: 3) {
+                ForEach(visibleFindings) { finding in
+                    RunQualityFindingRow(finding: finding)
+                }
+                if findings.count > visibleFindings.count {
+                    Text("\(findings.count - visibleFindings.count) more findings")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private var headerIcon: String {
+        if errorCount > 0 { return "xmark.octagon.fill" }
+        if warningCount > 0 { return "exclamationmark.triangle.fill" }
+        return "checkmark.seal.fill"
+    }
+
+    private var headerColor: Color {
+        if errorCount > 0 { return .red }
+        if warningCount > 0 { return .orange }
+        return .green
+    }
+}
+
+private struct RunQualityFindingRow: View {
+    let finding: RunQualityFinding
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: finding.severity.iconName)
+                .font(.caption2)
+                .foregroundStyle(finding.severity.color)
+                .frame(width: 14)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(finding.title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Text(finding.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                if !finding.evidence.isEmpty {
+                    Text(finding.evidence.joined(separator: "; "))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(finding.severity.color.opacity(0.08))
+        )
+    }
+}
+
+private extension RunQualitySeverity {
+    var iconName: String {
+        switch self {
+        case .info: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .info: return .green
+        case .warning: return .orange
+        case .error: return .red
+        }
+    }
+}
+
 private struct ArtifactGroup: Identifiable {
     let id: String
     let title: String
     let icon: String
     let order: Int
     let artifacts: [ArtifactRef]
+}
+
+private enum RunQualityAdapter {
+    static func findings(for run: SimulationRun, artifacts: [ArtifactRef]) -> [RunQualityFinding] {
+        RunQualityAnalyzer.analyze(input(for: run, artifacts: artifacts))
+    }
+
+    static func input(for run: SimulationRun, artifacts: [ArtifactRef]) -> RunQualityInput {
+        let spec = simulationSpec(in: artifacts).map { specSnapshot($0) }
+        return RunQualityInput(
+            run: RunQualityRunSnapshot(
+                id: run.id,
+                title: run.title,
+                status: run.status.rawValue,
+                eventCount: run.eventCount,
+                configuration: run.configuration
+            ),
+            spec: spec,
+            summaryMetrics: summaryMetrics(in: artifacts),
+            artifacts: artifacts.map { artifactSnapshot($0) },
+            compileLog: textArtifact(named: "compile.log", in: artifacts),
+            runLog: textArtifact(named: "run.log", in: artifacts)
+        )
+    }
+
+    static func specSnapshot(_ spec: SimulationSpec) -> RunQualitySpecSnapshot {
+        RunQualitySpecSnapshot(
+            eventCount: spec.eventCount,
+            analysisFamily: spec.analysisPlan?.family,
+            outputFiles: spec.outputPlan.extraFiles,
+            processSettings: spec.processSettings,
+            cutsSettings: spec.cutsSettings
+        )
+    }
+
+    static func artifactSnapshot(_ artifact: ArtifactRef) -> RunQualityArtifactSnapshot {
+        RunQualityArtifactSnapshot(
+            label: artifact.label,
+            kind: artifact.kind,
+            path: artifact.relativePath,
+            byteSize: fileSize(for: URL(fileURLWithPath: artifact.relativePath))
+        )
+    }
+
+    static func summaryMetrics(in artifacts: [ArtifactRef]) -> [String: String] {
+        guard let url = artifactURL(named: "summary.json", in: artifacts),
+              let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return [:]
+        }
+        return flattenJSONValues(object)
+    }
+
+    static func simulationSpec(in artifacts: [ArtifactRef]) -> SimulationSpec? {
+        guard let url = artifactURL(named: "simulation_spec.json", in: artifacts),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SimulationSpec.self, from: data)
+    }
+
+    static func textArtifact(named fileName: String, in artifacts: [ArtifactRef]) -> String? {
+        guard let url = artifactURL(named: fileName, in: artifacts) else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    static func artifactURL(named fileName: String, in artifacts: [ArtifactRef]) -> URL? {
+        artifacts.first { artifact in
+            URL(fileURLWithPath: artifact.relativePath).lastPathComponent == fileName
+                && FileManager.default.fileExists(atPath: artifact.relativePath)
+        }
+        .map { URL(fileURLWithPath: $0.relativePath) }
+    }
+
+    static func fileSize(for url: URL) -> UInt64? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return size.uint64Value
+    }
+
+    static func flattenJSONValues(_ value: Any, prefix: String = "") -> [String: String] {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [:]) { result, pair in
+                let key = prefix.isEmpty ? pair.key : "\(prefix).\(pair.key)"
+                result.merge(flattenJSONValues(pair.value, prefix: key), uniquingKeysWith: { _, new in new })
+            }
+        }
+
+        if let array = value as? [Any] {
+            return [prefix: "\(array.count) items"]
+        }
+
+        if let number = value as? NSNumber {
+            return [prefix: number.stringValue]
+        }
+
+        if let string = value as? String {
+            return [prefix: string]
+        }
+
+        if value is NSNull {
+            return [prefix: "null"]
+        }
+
+        return [prefix: String(describing: value)]
+    }
 }
 
 private enum RunEvidenceResolver {
@@ -2943,6 +3182,7 @@ private enum RunBundleExporter {
         let configuration: [String: String]
         let simulationSpec: [String: String]
         let summaryMetrics: [String: String]
+        let qualityFindings: [RunQualityFinding]
         let charts: [ChartSummary]
         let artifacts: [BundleArtifact]
         let missingArtifacts: [MissingArtifact]
@@ -2957,6 +3197,7 @@ private enum RunBundleExporter {
             case configuration
             case simulationSpec = "simulation_spec"
             case summaryMetrics = "summary_metrics"
+            case qualityFindings = "quality_findings"
             case charts
             case artifacts
             case missingArtifacts = "missing_artifacts"
@@ -3058,6 +3299,12 @@ private enum RunBundleExporter {
         let missingExpectedArtifacts = expectedArtifactNames.filter { !copiedNames.contains($0) }
         let simulationSpec = flattenedJSONValues(from: bundleURL.appendingPathComponent("simulation_spec.json"))
         let summaryMetrics = flattenedJSONValues(from: bundleURL.appendingPathComponent("summary.json"))
+        let qualityFindings = qualityFindings(
+            run: run,
+            bundleURL: bundleURL,
+            copiedArtifacts: copiedArtifacts,
+            summaryMetrics: summaryMetrics
+        )
         let chartSummaries = chartPayloads.map { chart in
             ChartSummary(
                 title: chart.title,
@@ -3086,6 +3333,7 @@ private enum RunBundleExporter {
             configuration: run.configuration,
             simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
+            qualityFindings: qualityFindings,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3097,6 +3345,7 @@ private enum RunBundleExporter {
             run: run,
             simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
+            qualityFindings: qualityFindings,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3217,10 +3466,56 @@ private enum RunBundleExporter {
         return [prefix: String(describing: value)]
     }
 
+    private static func qualityFindings(
+        run: SimulationRun,
+        bundleURL: URL,
+        copiedArtifacts: [BundleArtifact],
+        summaryMetrics: [String: String]
+    ) -> [RunQualityFinding] {
+        let specSnapshot = decodeSimulationSpec(from: bundleURL.appendingPathComponent("simulation_spec.json"))
+            .map { RunQualityAdapter.specSnapshot($0) }
+        let input = RunQualityInput(
+            run: RunQualityRunSnapshot(
+                id: run.id,
+                title: run.title,
+                status: run.status.rawValue,
+                eventCount: run.eventCount,
+                configuration: run.configuration
+            ),
+            spec: specSnapshot,
+            summaryMetrics: summaryMetrics,
+            artifacts: copiedArtifacts.map { artifact in
+                let url = bundleURL.appendingPathComponent(artifact.path)
+                return RunQualityArtifactSnapshot(
+                    label: artifact.label,
+                    kind: artifact.kind,
+                    path: url.path,
+                    byteSize: artifact.byteSize
+                )
+            },
+            compileLog: textFile(at: bundleURL.appendingPathComponent("compile.log")),
+            runLog: textFile(at: bundleURL.appendingPathComponent("run.log"))
+        )
+
+        return RunQualityAnalyzer.analyze(input)
+    }
+
+    private static func decodeSimulationSpec(from url: URL) -> SimulationSpec? {
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SimulationSpec.self, from: data)
+    }
+
+    private static func textFile(at url: URL) -> String? {
+        try? String(contentsOf: url, encoding: .utf8)
+    }
+
     private static func runReport(
         run: SimulationRun,
         simulationSpec: [String: String],
         summaryMetrics: [String: String],
+        qualityFindings: [RunQualityFinding],
         charts: [ChartSummary],
         artifacts: [BundleArtifact],
         missingArtifacts: [MissingArtifact],
@@ -3277,6 +3572,20 @@ private enum RunBundleExporter {
         } else {
             for key in summaryMetrics.keys.sorted() {
                 lines.append("- `\(key)`: \(summaryMetrics[key] ?? "")")
+            }
+        }
+
+        lines.append("")
+        lines.append("## Run Quality")
+        lines.append("")
+        if qualityFindings.isEmpty {
+            lines.append("No quality findings were generated.")
+        } else {
+            for finding in qualityFindings {
+                lines.append("- `\(finding.severity.rawValue)`: \(finding.title) - \(finding.detail)")
+                if !finding.evidence.isEmpty {
+                    lines.append("  - Evidence: \(finding.evidence.joined(separator: "; "))")
+                }
             }
         }
 

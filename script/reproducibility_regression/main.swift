@@ -26,6 +26,18 @@ private func expectContains(_ haystack: String, _ needle: String, _ message: Str
     }
 }
 
+private func expectFinding(
+    _ findings: [RunQualityFinding],
+    id: String,
+    severity: RunQualitySeverity,
+    _ message: String
+) throws {
+    guard let finding = findings.first(where: { $0.id == id }) else {
+        try fail("\(message): missing \(id)")
+    }
+    try expectEqual(finding.severity, severity, "\(message) severity")
+}
+
 private func testSummaryParsing() throws {
     let parsed = RunnerService.parseSummaryLines("""
     generated_events=200
@@ -157,10 +169,143 @@ private func testRunLineage() throws {
     try expectEqual(relationship?.kind, .variant, "relationship kind")
 }
 
+private func testRunQualityAnalyzer() throws {
+    let healthyFindings = RunQualityAnalyzer.analyze(qualityInput())
+    try expectFinding(healthyFindings, id: "quality-pass", severity: .info, "healthy run pass state")
+    try expect(!healthyFindings.contains(where: { $0.severity != .info }), "healthy run has no warning/error findings")
+
+    let missingFindings = RunQualityAnalyzer.analyze(qualityInput(
+        artifacts: qualityArtifacts(excluding: ["compile.log", "hist_primary.txt"])
+    ))
+    try expectFinding(
+        missingFindings,
+        id: "missing-evidence-compile.log",
+        severity: .error,
+        "missing compile log"
+    )
+    try expectFinding(
+        missingFindings,
+        id: "missing-output-hist_primary.txt",
+        severity: .error,
+        "missing declared output"
+    )
+
+    let emptyFindings = RunQualityAnalyzer.analyze(qualityInput(
+        artifacts: qualityArtifacts(byteSizes: ["hist_primary.txt": 0])
+    ))
+    try expectFinding(
+        emptyFindings,
+        id: "empty-output-hist_primary.txt",
+        severity: .error,
+        "empty declared output"
+    )
+
+    let lowEventFindings = RunQualityAnalyzer.analyze(qualityInput(eventCount: 200, summaryEvents: 200))
+    try expectFinding(lowEventFindings, id: "low-event-count", severity: .warning, "low event count")
+
+    let mismatchFindings = RunQualityAnalyzer.analyze(qualityInput(eventCount: 300, summaryEvents: 200))
+    try expectFinding(
+        mismatchFindings,
+        id: "event-count-mismatch",
+        severity: .error,
+        "event count mismatch"
+    )
+
+    let overflowAndLogFindings = RunQualityAnalyzer.analyze(qualityInput(
+        summaryMetrics: [
+            "generated_events": "10000",
+            "hist_primary.overflow": "3"
+        ],
+        compileLog: "clang warning: argument unused during compilation"
+    ))
+    try expectFinding(
+        overflowAndLogFindings,
+        id: "histogram-overflow-hist_primary-overflow",
+        severity: .warning,
+        "histogram overflow"
+    )
+    try expectFinding(
+        overflowAndLogFindings,
+        id: "log-warning-compile.log",
+        severity: .warning,
+        "compile warning marker"
+    )
+
+    let cutFindings = RunQualityAnalyzer.analyze(qualityInput(
+        title: "Minimum-bias charged multiplicity",
+        processSettings: ["HardQCD:all = on"],
+        cutsSettings: ["PhaseSpace:pTHatMin = 18.5"]
+    ))
+    try expectFinding(
+        cutFindings,
+        id: "inclusive-interpretation-with-hard-cuts",
+        severity: .warning,
+        "inclusive/minimum-bias cut warning"
+    )
+}
+
+private func qualityInput(
+    title: String = "Charged multiplicity",
+    eventCount: Int = 10_000,
+    summaryEvents: Int = 10_000,
+    summaryMetrics: [String: String]? = nil,
+    artifacts: [RunQualityArtifactSnapshot]? = nil,
+    processSettings: [String] = ["SoftQCD:nonDiffractive = on"],
+    cutsSettings: [String] = [],
+    compileLog: String = "",
+    runLog: String = ""
+) -> RunQualityInput {
+    RunQualityInput(
+        run: RunQualityRunSnapshot(
+            id: "quality-fixture",
+            title: title,
+            status: "completed",
+            eventCount: eventCount,
+            configuration: ["event_count": "\(eventCount)"]
+        ),
+        spec: RunQualitySpecSnapshot(
+            eventCount: eventCount,
+            analysisFamily: "charged_multiplicity",
+            outputFiles: ["summary_lines.txt", "hist_primary.txt"],
+            processSettings: processSettings,
+            cutsSettings: cutsSettings
+        ),
+        summaryMetrics: summaryMetrics ?? ["generated_events": "\(summaryEvents)"],
+        artifacts: artifacts ?? qualityArtifacts(),
+        compileLog: compileLog,
+        runLog: runLog
+    )
+}
+
+private func qualityArtifacts(
+    excluding excludedNames: Set<String> = [],
+    byteSizes: [String: UInt64] = [:]
+) -> [RunQualityArtifactSnapshot] {
+    [
+        "run.cc",
+        "simulation_spec.json",
+        "summary.json",
+        "summary_lines.txt",
+        "compile.log",
+        "run.log",
+        "hist_primary.txt"
+    ]
+    .filter { !excludedNames.contains($0) }
+    .map { name in
+        RunQualityArtifactSnapshot(
+            label: name,
+            kind: name.hasPrefix("hist_") ? "data" : "evidence",
+            path: "/tmp/vidura-quality-fixture/\(name)",
+            byteSize: byteSizes[name] ?? 128
+        )
+    }
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("RunnerService.parseSummaryLines", testSummaryParsing),
     ("CodegenAgent.run(spec:)", testDeterministicCodegen),
-    ("RunLineageResolver", testRunLineage)
+    ("RunLineageResolver", testRunLineage),
+    ("RunQualityAnalyzer", testRunQualityAnalyzer)
 ]
 
 do {
