@@ -18,6 +18,7 @@ xcrun swiftc \
   "${REPO_ROOT}/Physics Companion/Agents/RunnerSummaryParser.swift" \
   "${REPO_ROOT}/Physics Companion/Agents/RunnerService.swift" \
   "${REPO_ROOT}/Physics Companion/RunLineageResolver.swift" \
+  "${REPO_ROOT}/Physics Companion/RunQualityAnalyzer.swift" \
   "${REPO_ROOT}/script/reproducibility_regression/main.swift" \
   -o "${HARNESS}"
 
