@@ -151,6 +151,8 @@ Completed:
 - Run lineage and one-click Compare to Source for exact reruns and variants.
 - Script-based reproducibility regression harness:
   `./script/reproducibility_regression.sh`.
+- Deterministic Run Quality / Sanity Checks in Run Evidence and exported
+  bundles.
 
 This is a strong Phase 0/1 foundation. It is still far from the workbench
 benchmark because it lacks domain source connectors, managed compute, native
@@ -209,21 +211,32 @@ Completed:
 
 Remaining:
 
-- include quality/reviewer findings in exported bundles;
+- include reviewer findings in exported bundles;
 - make run bundles more portable as cited artifacts.
 
 ### Phase 2: Add The Physics Reviewer Loop
 
 Goal: completed analyses are trustworthy enough for exploratory physics work.
 
-Needed:
+Status: in progress.
+
+Completed:
 
 - deterministic Run Quality / Sanity Checks;
-- reviewer findings in Run Evidence and exports;
+- quality findings in Run Evidence and exports;
 - checks for low statistics, missing artifacts, event-count mismatches, overflow,
-  suspicious cuts, process/sample mismatch, unit issues, and untraceable claims;
+  suspicious cuts, process/sample mismatch, and log warning/error markers;
+- regression coverage for deterministic quality rules.
+
+Needed:
+
+- model-backed Physics Reviewer Agent that consumes deterministic quality
+  findings and checks interpretation text against evidence;
+- reviewer checks for unit issues, figure/summary mismatch, untraceable
+  numbers, missing citations, and unsupported physical claims;
+- reviewer findings in Run Evidence and exports;
 - structured quality summaries that downstream agents must respect;
-- regression coverage for every quality rule.
+- regression coverage for reviewer input shaping, parsing, and fallback paths.
 
 This is the current near-term priority because it is the bridge from
 "reproducible run" to "scientific work product."
@@ -302,34 +315,39 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-Run Quality / Sanity Checks.
+Physics Reviewer Agent v1.
 
 Why: Claude Science's differentiator is not just that it runs tools. It checks
 whether artifacts are traceable, figures match code, calculations are sound, and
-outputs can be reproduced. Vidura's equivalent first step is a deterministic
-physics reviewer layer for completed Pythia runs.
+outputs can be reproduced. Vidura now has deterministic run-quality checks. The
+next step is a reviewer agent that reads the evidence, summary, charts, and
+quality findings, then flags unsupported interpretation before the user treats a
+run as science.
 
 Scope:
 
-- pure `RunQualityAnalyzer` or equivalent helper;
-- compact findings in Run Evidence;
-- warnings/errors for missing evidence, low event counts, event-count mismatch,
-  missing declared outputs, nonzero overflows, suspicious cuts, and log warnings;
-- regression coverage in `./script/reproducibility_regression.sh`;
-- no OpenAI calls for quality analysis in this first slice.
+- consume `RunQualityAnalyzer` findings as hard input;
+- check final summary text and chart claims against `simulation_spec.json`,
+  `summary.json`, chart payloads, logs, and artifacts;
+- surface compact reviewer findings in Run Evidence;
+- persist/export reviewer notes if this can be done without a broad data-model
+  rewrite;
+- add deterministic regression coverage for input construction, response
+  parsing, and fallback behavior;
+- no live OpenAI calls in the regression harness.
 
 ## Next 8 Product Slices
 
-1. Run Quality / Sanity Checks.
-2. Include quality findings in Export Run Bundle.
-3. Physics Reviewer Agent v1 that consumes deterministic findings and checks
+1. Physics Reviewer Agent v1 that consumes deterministic findings and checks
    interpretation text against evidence.
-4. HEP source connectors v1: arXiv, INSPIRE, HEPData, PDG.
-5. Analysis Plan Editor so users can review/edit assumptions before execution.
-6. Native physics artifact viewer upgrades: richer histograms, tables, and
+2. HEP source connectors v1: arXiv, INSPIRE, HEPData, PDG.
+3. Analysis Plan Editor so users can review/edit assumptions before execution.
+4. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
-7. Reusable HEP analysis templates and skills.
-8. Local compute session model with environment capture, preparing for SSH/HPC.
+5. Reusable HEP analysis templates and skills.
+6. Local compute session model with environment capture, preparing for SSH/HPC.
+7. Portable cited run bundles with stronger manifest/environment capture.
+8. Publication/analysis-note export with reviewer-gated claims.
 
 ## Non-Goals
 

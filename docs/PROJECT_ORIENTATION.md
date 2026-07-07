@@ -50,7 +50,11 @@ Generated simulation artifacts are stored under
 Completed runs can now be inspected through Run Evidence, exported as a run
 bundle, rerun exactly from persisted source/spec, rerun as a controlled
 parameterized variant, compared side by side, and traced back to source runs
-through the lineage/reproducibility surface.
+through the lineage/reproducibility surface. Completed runs also receive
+deterministic Run Quality findings for missing evidence, missing or empty
+declared outputs, low event counts, event-count mismatches, histogram overflow
+markers, suspicious inclusive/minimum-bias wording, and log warning/error
+markers.
 
 ## Runtime Pipeline
 
@@ -95,9 +99,8 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add deterministic Run Quality / Sanity Checks that inspect completed run
-   specs, summaries, logs, and artifacts for missing outputs, low statistics,
-   biased sample/cut choices, and obvious analysis-contract drift.
+1. Add Physics Reviewer Agent v1 that consumes deterministic Run Quality
+   findings and checks final interpretation text against run evidence.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of

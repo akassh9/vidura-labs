@@ -1,6 +1,6 @@
 # Next Thread Handoff
 
-Date: 2026-07-06
+Date: 2026-07-07
 Active repo: `https://github.com/akassh9/vidura-labs`
 Canonical local workspace: `/Users/akash009/vidura`
 
@@ -248,54 +248,128 @@ Reproducibility Regression Harness:
 - Known residual gap: export manifest assembly remains UI-adjacent inside
   `RunBundleExporter` and is not covered by the first harness.
 
+Run Quality / Sanity Checks:
+
+- PR #13: `https://github.com/akassh9/vidura-labs/pull/13`
+- Merged at `b08e921f708d331e4924d3b2b42b4401eb5baa2e`.
+- Added `RunQualityAnalyzer`, a pure deterministic analyzer for completed-run
+  evidence, summaries, specs, artifacts, and logs.
+- Run Evidence cards now show a compact completed-run-only `Run Quality` block.
+- Export Run Bundle now writes quality findings into `manifest.json` under
+  `quality_findings` and into `run_report.md`.
+- Checks implemented:
+  - expected completed-run evidence: `run.cc`, `simulation_spec.json`,
+    `summary.json`, `summary_lines.txt`, `compile.log`, and `run.log`;
+  - missing or empty declared plot/table outputs;
+  - `summary.json` event-count mismatch with run metadata;
+  - low exploratory event-count warning below `1000`;
+  - nonzero visible histogram overflow counters;
+  - inclusive/minimum-bias interpretation warning when hard-process or
+    `PhaseSpace:pTHatMin` cuts are present;
+  - warning/error markers in compile/run logs despite completed status.
+- Harness coverage in `./script/reproducibility_regression.sh`:
+  - healthy pass state;
+  - missing expected evidence;
+  - missing and empty declared output;
+  - low event count;
+  - event-count mismatch;
+  - overflow and compile-log warning markers;
+  - inclusive/minimum-bias with hard-process / pT-hat cut warning.
+- CTO review validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch from `.codex/DerivedData`.
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `git diff --check origin/main...HEAD` passed.
+  - Tracked-file hygiene and diff secret scans were clean.
+- Known residual gap: no fresh simulation smoke or manual export-dialog
+  click-through was done during the merge review.
+
 ## Next Product Slice
 
-Run Quality / Sanity Checks.
+Physics Reviewer Agent v1.
 
-Why this next: the run record is now reproducible and regression-tested. The
-next trust problem is not another workflow action; it is whether a completed
-Pythia run is scientifically usable. The app should flag low statistics, missing
-declared outputs, suspicious cuts/processes, and artifact/spec mismatches before
-the user treats a chart or summary as reliable.
+Why this next: the run record is reproducible, regression-tested, and now has
+deterministic run-quality findings. The next trust problem is interpretation.
+The app should review whether the final summary, chart descriptions, and
+scientific claims are actually supported by the run evidence.
+
+The reviewer should consume, not replace, `RunQualityAnalyzer` findings. If
+deterministic findings include warnings or errors, the reviewer must not present
+the run as clean.
+
+Recommended scope:
+
+- add a small model-backed `PhysicsReviewerAgent` or equivalent helper that
+  uses `OpenAIClient` structured output;
+- build a pure input assembly layer from existing run evidence:
+  `simulation_spec.json`, `summary.json`, chart payloads/messages, logs,
+  artifacts, quality findings, and the final summary text;
+- return structured reviewer findings with severity, category, message, and
+  evidence references where possible;
+- include deterministic fallback behavior when OpenAI is unavailable;
+- surface compact reviewer findings in Run Evidence near Run Quality;
+- include reviewer notes in Export Run Bundle if this fits the current exporter
+  without a broad refactor;
+- add regression coverage for input construction, response parsing, and fallback
+  behavior, but do not make the harness depend on a live OpenAI call.
+
+Reviewer categories to prioritize:
+
+- unsupported or overconfident physics interpretation;
+- summary claims that conflict with chart payloads or `summary.json`;
+- missing citations/reference data when comparing to real measurements;
+- unit or observable-name ambiguity;
+- deterministic quality warnings that the final summary ignores;
+- cuts/process choices that make inclusive/minimum-bias wording misleading.
+
+Acceptance criteria:
+
+- existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
+  Run Quality, and regression harness behavior remains intact;
+- reviewer output is visibly tied to artifacts and quality findings;
+- no schema migration unless the agent can justify why current messages,
+  artifacts, or run configuration cannot carry the first reviewer notes;
+- validation includes build, verify launch, regression harness, diff check,
+  tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Keep the first slice deterministic and evidence-driven. Do not add a schema
-migration unless the existing artifacts/config/message model cannot support the
-surface.
+Keep the first reviewer slice narrow and evidence-driven. Use OpenAI for the
+reviewer judgment, but keep input assembly, response parsing, and fallback paths
+pure enough for the regression harness. Do not add a schema migration unless the
+existing artifacts/config/message model cannot support the first reviewer notes.
 
 Suggested shape:
 
-- Add a small pure `RunQualityAnalyzer` or similarly named helper that accepts a
-  run/spec/summary/artifact/log snapshot and returns structured findings.
-- Severity levels should be simple: info, warning, error.
-- First checks should include:
-  - completed run has `run.cc`, `simulation_spec.json`, `summary.json`,
-    `summary_lines.txt`, `compile.log`, `run.log`, and declared plot/table files;
-  - `summary.json` event counts agree with the run event count when present;
-  - event count is below a useful exploratory threshold;
-  - requested output files are missing or empty;
-  - histogram overflow counters are nonzero when visible in summary data;
-  - hard-process or `PhaseSpace:pTHatMin` cuts are present while the run title or
-    analysis family implies inclusive/minimum-bias interpretation;
-  - run/compile logs contain obvious failure or warning markers despite completed
-    status.
-- Surface findings compactly in Run Evidence. Keep it dense and operational.
-- Include quality findings in Export Run Bundle if it is straightforward without
+- Add `PhysicsReviewerAgent` or equivalent under `Physics Companion/Agents/`.
+- Add a small pure reviewer input builder, either near the agent or as a helper
+  that can be included by `script/reproducibility_regression.sh`.
+- Use `RunQualityAnalyzer` output as first-class evidence in the prompt and in
+  the fallback. Do not ask the model to rediscover deterministic checks.
+- Prefer a strict structured output contract with categories like unsupported
+  claim, figure mismatch, unit ambiguity, citation/reference gap, ignored
+  quality finding, and cut/process wording issue.
+- Run the reviewer after the final physics summary is available, or lazily from
+  the Run Evidence surface if that is much smaller. Pick the smaller coherent
+  path and document the tradeoff in the PR notes.
+- Surface findings compactly in Run Evidence, near Run Quality.
+- Include reviewer notes in Export Run Bundle if it is straightforward without a
   broad exporter refactor.
 - Add harness coverage to `./script/reproducibility_regression.sh` for the pure
-  quality analyzer.
-- Do not call OpenAI from the analyzer or export path.
+  input builder, parser, and deterministic fallback.
+- Do not call OpenAI from the regression harness.
 
 ## Acceptance Criteria
 
-- Completed Run Evidence cards show deterministic quality findings when relevant.
-- A clean completed run with all expected evidence shows an explicit low-noise
-  pass/healthy state.
-- Fixture or harness cases cover missing artifact, low event count, pTHatMin/cut
-  warning, and event-count mismatch.
-- The analyzer is pure enough to run from `./script/reproducibility_regression.sh`.
-- Export behavior is unchanged, or quality metadata is added deterministically if
+- Completed Run Evidence cards show reviewer findings or a low-noise reviewed
+  state when reviewer output is available.
+- Reviewer output explicitly respects deterministic Run Quality warnings/errors.
+- Harness cases cover parser behavior, malformed reviewer output fallback, and a
+  quality-warning scenario where the reviewer/fallback must not call the run
+  clean.
+- Existing Run Quality harness cases still pass.
+- Export behavior is unchanged, or reviewer notes are added deterministically if
   included.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
@@ -344,4 +418,5 @@ sqlite3 "$HOME/Library/Application Support/com.AL.PhysicsCompanion/research.db" 
   exported run bundles.
 - Do not revert unrelated user or agent changes.
 - Back up live Application Support DB before manual data patching.
-- Keep export deterministic and evidence-driven; do not call OpenAI for export.
+- Keep export deterministic and evidence-driven; export should serialize existing
+  reviewer findings, not call OpenAI.
