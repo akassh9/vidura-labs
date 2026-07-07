@@ -18,7 +18,7 @@ Start by reading:
 
 Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
 
-Your task: implement the next slice, Run Quality / Sanity Checks.
+Your task: implement the next slice, Physics Reviewer Agent v1.
 
 Context:
 - Run Evidence / Provenance exists.
@@ -28,25 +28,42 @@ Context:
 - Parameterized Rerun is merged.
 - Run Lineage & Reproducibility Surface is merged.
 - Reproducibility Regression Harness is merged.
-- The app can now produce, replay, compare, export, trace, and regression-test the run record.
-- The next trust gap is physics quality: a completed run can still be low-statistics, missing declared outputs, biased by cuts, or internally inconsistent.
+- Run Quality / Sanity Checks is merged.
+- The app can now produce, replay, compare, export, trace, quality-check, and regression-test the run record.
+- The next trust gap is interpretation: a completed run can have a plausible-looking summary that overstates the evidence, ignores quality warnings, mislabels cuts/processes, or describes charts/metrics incorrectly.
 
 Implementation target:
-1. Keep this slice deterministic and evidence-driven. Do not call OpenAI for quality analysis.
-2. Add a small pure `RunQualityAnalyzer` or similarly named helper that accepts run/spec/summary/artifact/log snapshots and returns structured findings.
-3. Use simple severity levels: info, warning, error.
-4. First checks should include:
-   - completed run has expected evidence: `run.cc`, `simulation_spec.json`, `summary.json`, `summary_lines.txt`, `compile.log`, `run.log`, and declared plot/table files
-   - `summary.json` event counts agree with the run event count when present
-   - low event count warning for exploratory physics
-   - requested output files are missing or empty
-   - histogram overflow counters are nonzero when visible in summary data
-   - hard-process or `PhaseSpace:pTHatMin` cuts are present while title/family implies inclusive or minimum-bias interpretation
-   - run/compile logs contain obvious failure or warning markers despite completed status
-5. Surface findings compactly in Run Evidence. Keep the UI dense and operational.
-6. Include quality findings in Export Run Bundle if straightforward without broad exporter refactor.
-7. Add regression coverage to `./script/reproducibility_regression.sh` for the pure quality analyzer.
-8. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, and the existing regression harness working.
+1. Build on `RunQualityAnalyzer`; do not duplicate or replace deterministic quality checks.
+2. Add a small model-backed `PhysicsReviewerAgent` or equivalent helper using `OpenAIClient` structured output.
+3. Add a pure input assembly layer that gathers completed-run evidence:
+   - `simulation_spec.json`
+   - `summary.json`
+   - chart payloads/messages
+   - `compile.log` and `run.log` snippets or marker summaries
+   - artifact names/sizes/kinds
+   - deterministic `RunQualityAnalyzer` findings
+   - the final physics summary text
+4. Return structured reviewer findings with severity, category, message, and evidence references where possible.
+5. Reviewer findings must respect deterministic quality findings. If Run Quality has warnings/errors, the reviewer must not summarize the run as clean.
+6. Include deterministic fallback behavior when OpenAI is unavailable or returns malformed output.
+7. Surface compact reviewer findings in Run Evidence near the Run Quality block. Keep the UI dense and operational.
+8. Include reviewer notes in Export Run Bundle if this fits the current exporter without a broad refactor.
+9. Add regression coverage to `./script/reproducibility_regression.sh` for pure input construction, response parsing, and fallback behavior. Do not make the harness depend on a live OpenAI call.
+10. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, and the existing regression harness working.
+
+Reviewer categories to prioritize:
+- unsupported or overconfident physics interpretation
+- summary claims that conflict with chart payloads or `summary.json`
+- missing citations/reference data when comparing to real measurements
+- unit or observable-name ambiguity
+- deterministic quality warnings that the final summary ignores
+- cuts/process choices that make inclusive/minimum-bias wording misleading
+
+Implementation constraints:
+- No schema migration unless you can justify why existing messages, artifacts, or run configuration cannot carry the first reviewer notes.
+- Avoid broad UI redesign. Add a compact operational block to the existing Run Evidence surface.
+- Avoid live OpenAI calls in the regression harness.
+- Do not print `.env` or API keys.
 
 Validation:
 1. Run `./script/build_and_run.sh build`.
@@ -64,8 +81,9 @@ Report back with:
 - PR URL
 - changed files
 - validation commands and results
-- quality checks implemented
-- where findings are surfaced
+- reviewer categories implemented
+- where reviewer findings are surfaced
+- whether reviewer notes are included in exports
 - harness cases added
 - known gaps or follow-up recommendations
 ```
