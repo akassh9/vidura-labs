@@ -1,0 +1,67 @@
+{
+  "id": "minimum_bias_with_hard_qcd_cut",
+  "title": "Minimum-bias wording with hard-process cuts",
+  "category": "cut_process_wording",
+  "prompt": "Produce a minimum-bias charged multiplicity result.",
+  "fixtures": {
+    "run_metadata": {
+      "id": "bench-cut-wording",
+      "title": "Minimum-bias charged multiplicity",
+      "status": "completed",
+      "event_count": 10000,
+      "configuration": {
+        "event_count": "10000",
+        "PhaseSpace:pTHatMin": "18.5"
+      }
+    },
+    "simulation_spec": {
+      "event_count": 10000,
+      "analysis_family": "charged_multiplicity",
+      "output_files": ["hist_primary.txt"],
+      "process_settings": ["HardQCD:all = on"],
+      "cuts_settings": ["PhaseSpace:pTHatMin = 18.5"]
+    },
+    "summary_metrics": {
+      "generated_events": "10000"
+    },
+    "artifacts": [
+      {"label": "run.cc", "kind": "source", "path": "run.cc", "byte_size": 2048},
+      {"label": "simulation_spec.json", "kind": "spec", "path": "simulation_spec.json", "byte_size": 512},
+      {"label": "summary.json", "kind": "summary", "path": "summary.json", "byte_size": 256},
+      {"label": "summary_lines.txt", "kind": "summary", "path": "summary_lines.txt", "byte_size": 64},
+      {"label": "compile.log", "kind": "log", "path": "compile.log", "byte_size": 16},
+      {"label": "run.log", "kind": "log", "path": "run.log", "byte_size": 16},
+      {"label": "hist_primary.txt", "kind": "data", "path": "hist_primary.txt", "byte_size": 128}
+    ],
+    "compile_log": "",
+    "run_log": "",
+    "chart_payloads": [],
+    "reference_pack": {
+      "format_version": 1,
+      "generated_at": "2026-07-08T00:00:00Z",
+      "query": "baseline pythia references",
+      "references": [],
+      "tags": ["charged_multiplicity"],
+      "source_statuses": []
+    },
+    "assistant_interpretation": "This is an inclusive minimum-bias charged multiplicity sample.",
+    "offline_reviewer_response": null
+  },
+  "expected_findings": [
+    {
+      "category": "cut_process_wording",
+      "severity": "warning",
+      "must_include": ["hard-process"],
+      "evidence_refs": ["PhaseSpace:pTHatMin"],
+      "reference_ids": []
+    }
+  ],
+  "competitor_outputs": [
+    {
+      "label": "general_ai_baseline",
+      "interpretation": "The result is a minimum-bias charged multiplicity distribution.",
+      "known_failures": ["misses the hard QCD process and pTHat minimum cut"]
+    }
+  ],
+  "notes": "Hard-process and pTHat cuts bias samples that are described as inclusive or minimum-bias."
+}

@@ -1,0 +1,65 @@
+{
+  "id": "missing_expected_compile_log",
+  "title": "Completed run missing expected evidence",
+  "category": "missing_evidence",
+  "prompt": "Audit whether a completed Pythia run has all evidence artifacts.",
+  "fixtures": {
+    "run_metadata": {
+      "id": "bench-missing-evidence",
+      "title": "Charged multiplicity evidence audit",
+      "status": "completed",
+      "event_count": 10000,
+      "configuration": {
+        "event_count": "10000"
+      }
+    },
+    "simulation_spec": {
+      "event_count": 10000,
+      "analysis_family": "charged_multiplicity",
+      "output_files": ["hist_primary.txt"],
+      "process_settings": ["SoftQCD:nonDiffractive = on"],
+      "cuts_settings": []
+    },
+    "summary_metrics": {
+      "generated_events": "10000"
+    },
+    "artifacts": [
+      {"label": "run.cc", "kind": "source", "path": "run.cc", "byte_size": 2048},
+      {"label": "simulation_spec.json", "kind": "spec", "path": "simulation_spec.json", "byte_size": 512},
+      {"label": "summary.json", "kind": "summary", "path": "summary.json", "byte_size": 256},
+      {"label": "summary_lines.txt", "kind": "summary", "path": "summary_lines.txt", "byte_size": 64},
+      {"label": "run.log", "kind": "log", "path": "run.log", "byte_size": 16},
+      {"label": "hist_primary.txt", "kind": "data", "path": "hist_primary.txt", "byte_size": 128}
+    ],
+    "compile_log": "",
+    "run_log": "",
+    "chart_payloads": [],
+    "reference_pack": {
+      "format_version": 1,
+      "generated_at": "2026-07-08T00:00:00Z",
+      "query": "baseline pythia references",
+      "references": [],
+      "tags": ["charged_multiplicity"],
+      "source_statuses": []
+    },
+    "assistant_interpretation": "The run completed and all evidence is available.",
+    "offline_reviewer_response": null
+  },
+  "expected_findings": [
+    {
+      "category": "missing_evidence",
+      "severity": "error",
+      "must_include": ["no readable compile.log"],
+      "evidence_refs": ["compile.log"],
+      "reference_ids": []
+    }
+  ],
+  "competitor_outputs": [
+    {
+      "label": "general_ai_baseline",
+      "interpretation": "The run is complete because summary artifacts exist.",
+      "known_failures": ["ignores missing compile log provenance"]
+    }
+  ],
+  "notes": "A completed run is not auditable if required evidence is missing."
+}
