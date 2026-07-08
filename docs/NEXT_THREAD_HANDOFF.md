@@ -1,6 +1,6 @@
 # Next Thread Handoff
 
-Date: 2026-07-07
+Date: 2026-07-08
 Active repo: `https://github.com/akassh9/vidura-labs`
 Canonical local workspace: `/Users/akash009/vidura`
 
@@ -285,91 +285,123 @@ Run Quality / Sanity Checks:
 - Known residual gap: no fresh simulation smoke or manual export-dialog
   click-through was done during the merge review.
 
+Physics Reviewer Agent v1:
+
+- PR #15: `https://github.com/akassh9/vidura-labs/pull/15`
+- Merged at `3f4fcbbf5a7ef6aaeb7e2f32deb7411267705cc2`.
+- Added `PhysicsReviewerAgent` with OpenAI structured output, pure input
+  construction, response parsing, and deterministic fallback.
+- The reviewer runs after completed original, exact rerun, and parameterized
+  run summaries.
+- Reviewer evidence is persisted as `physics_reviewer.json` and as compact
+  reviewer chat messages.
+- Run Evidence shows reviewer findings near Run Quality.
+- Export Run Bundle writes reviewer findings into `manifest.json` under
+  `reviewer_findings` and into `run_report.md`.
+- Added `MessageSender.reviewer` for normalized reviewer messages.
+- Harness coverage in `./script/reproducibility_regression.sh`:
+  - reviewer evidence/input construction;
+  - prompt payload includes quality findings and final summary text;
+  - structured response parsing;
+  - malformed response fallback;
+  - quality-warning fallback that must not call the run clean.
+- CTO review validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch from `.codex/DerivedData`.
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `git diff --check origin/main...HEAD` passed.
+  - `git diff --cached --check` passed.
+  - Tracked-file hygiene and diff secret scans were clean.
+  - GitHub reported no checks configured for the branch.
+- Known residual gap: no fresh simulation smoke run and no manual native
+  UI/export click-through of a newly generated reviewer artifact.
+
 ## Next Product Slice
 
-Physics Reviewer Agent v1.
+HEP Source Connectors v1.
 
-Why this next: the run record is reproducible, regression-tested, and now has
-deterministic run-quality findings. The next trust problem is interpretation.
-The app should review whether the final summary, chart descriptions, and
-scientific claims are actually supported by the run evidence.
+Why this next: the run record is reproducible, regression-tested, quality
+checked, and model-reviewed against local evidence. The next trust problem is
+external grounding. Vidura needs physics-native source packs so future summaries
+and reviewers can cite real HEP literature, reference data, and canonical facts.
 
-The reviewer should consume, not replace, `RunQualityAnalyzer` findings. If
-deterministic findings include warnings or errors, the reviewer must not present
-the run as clean.
+This should be the first domain-source layer, not a broad web browser. Keep it
+small, typed, and testable.
 
 Recommended scope:
 
-- add a small model-backed `PhysicsReviewerAgent` or equivalent helper that
-  uses `OpenAIClient` structured output;
-- build a pure input assembly layer from existing run evidence:
-  `simulation_spec.json`, `summary.json`, chart payloads/messages, logs,
-  artifacts, quality findings, and the final summary text;
-- return structured reviewer findings with severity, category, message, and
-  evidence references where possible;
-- include deterministic fallback behavior when OpenAI is unavailable;
-- surface compact reviewer findings in Run Evidence near Run Quality;
-- include reviewer notes in Export Run Bundle if this fits the current exporter
-  without a broad refactor;
-- add regression coverage for input construction, response parsing, and fallback
-  behavior, but do not make the harness depend on a live OpenAI call.
+- add typed reference models such as `HEPReference`, `HEPReferencePack`, and
+  source enum values for `arxiv`, `inspire`, `hepdata`, and `pdg`;
+- add small source-specific connector helpers/clients for:
+  - arXiv Atom API search and ID URL normalization;
+  - INSPIRE literature search/result normalization;
+  - HEPData record/search normalization where the public API shape is stable;
+  - PDG canonical links/search seeds for common particles/constants;
+- add a deterministic reference-pack assembler that can merge/dedupe references
+  by DOI/arXiv/INSPIRE/HEPData/URL and preserve source attribution;
+- expose a compact reference pack in the existing research surface. Prefer a
+  small "References" block or side-panel section over broad navigation work;
+- include reference-pack metadata in Export Run Bundle if straightforward;
+- add fixture-based regression coverage for parsing, normalization, dedupe, and
+  export serialization. Do not make the harness depend on live network calls;
+- make live network failures visible and non-fatal.
 
-Reviewer categories to prioritize:
+Connector result fields to prioritize:
 
-- unsupported or overconfident physics interpretation;
-- summary claims that conflict with chart payloads or `summary.json`;
-- missing citations/reference data when comparing to real measurements;
-- unit or observable-name ambiguity;
-- deterministic quality warnings that the final summary ignores;
-- cuts/process choices that make inclusive/minimum-bias wording misleading.
+- source;
+- title;
+- authors or collaboration;
+- year;
+- abstract/snippet;
+- DOI;
+- arXiv ID;
+- INSPIRE record ID;
+- HEPData record ID;
+- URL;
+- tags/observables when available.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
-  Run Quality, and regression harness behavior remains intact;
-- reviewer output is visibly tied to artifacts and quality findings;
+  Run Quality, Physics Reviewer, and regression harness behavior remains intact;
+- source records preserve source attribution and stable URLs;
+- dedupe rules do not silently drop source-specific identifiers;
 - no schema migration unless the agent can justify why current messages,
-  artifacts, or run configuration cannot carry the first reviewer notes;
+  artifacts, or run configuration cannot carry the first reference pack;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Keep the first reviewer slice narrow and evidence-driven. Use OpenAI for the
-reviewer judgment, but keep input assembly, response parsing, and fallback paths
-pure enough for the regression harness. Do not add a schema migration unless the
-existing artifacts/config/message model cannot support the first reviewer notes.
+Keep the first connector slice narrow. The goal is not complete literature
+automation; it is a reusable, typed source layer that future summary/reviewer
+agents can consume.
 
 Suggested shape:
 
-- Add `PhysicsReviewerAgent` or equivalent under `Physics Companion/Agents/`.
-- Add a small pure reviewer input builder, either near the agent or as a helper
-  that can be included by `script/reproducibility_regression.sh`.
-- Use `RunQualityAnalyzer` output as first-class evidence in the prompt and in
-  the fallback. Do not ask the model to rediscover deterministic checks.
-- Prefer a strict structured output contract with categories like unsupported
-  claim, figure mismatch, unit ambiguity, citation/reference gap, ignored
-  quality finding, and cut/process wording issue.
-- Run the reviewer after the final physics summary is available, or lazily from
-  the Run Evidence surface if that is much smaller. Pick the smaller coherent
-  path and document the tradeoff in the PR notes.
-- Surface findings compactly in Run Evidence, near Run Quality.
-- Include reviewer notes in Export Run Bundle if it is straightforward without a
-  broad exporter refactor.
-- Add harness coverage to `./script/reproducibility_regression.sh` for the pure
-  input builder, parser, and deterministic fallback.
-- Do not call OpenAI from the regression harness.
+- Put pure models and normalization helpers somewhere reusable by the app and
+  `script/reproducibility_regression.sh`.
+- Isolate live HTTP fetching behind small connector methods so parser tests can
+  run from local fixtures.
+- Start with a reference-pack action/path that can be triggered from existing
+  thread or run context without redesigning the whole UI.
+- Keep any OpenAI use optional. If model-assisted query planning is added, it
+  must have deterministic fallback query strings.
+- Prefer storing reference packs as artifacts/messages before adding a schema
+  migration.
+- Make bundle export serialize existing reference packs only; export should not
+  perform live network calls.
 
 ## Acceptance Criteria
 
-- Completed Run Evidence cards show reviewer findings or a low-noise reviewed
-  state when reviewer output is available.
-- Reviewer output explicitly respects deterministic Run Quality warnings/errors.
-- Harness cases cover parser behavior, malformed reviewer output fallback, and a
-  quality-warning scenario where the reviewer/fallback must not call the run
-  clean.
-- Existing Run Quality harness cases still pass.
-- Export behavior is unchanged, or reviewer notes are added deterministically if
+- A user-visible reference pack can be generated or surfaced for a HEP-oriented
+  prompt/run without requiring schema migration.
+- Fixture tests cover arXiv, INSPIRE, and at least one HEPData or PDG
+  normalization path.
+- Dedupe preserves multiple source IDs for the same reference.
+- Existing Physics Reviewer and Run Quality harness cases still pass.
+- Export behavior is unchanged, or reference metadata is added deterministically if
   included.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.

@@ -153,10 +153,12 @@ Completed:
   `./script/reproducibility_regression.sh`.
 - Deterministic Run Quality / Sanity Checks in Run Evidence and exported
   bundles.
+- Physics Reviewer Agent v1 in completed-run flow, Run Evidence, exports, and
+  the regression harness.
 
 This is a strong Phase 0/1 foundation. It is still far from the workbench
 benchmark because it lacks domain source connectors, managed compute, native
-physics artifact viewers, reviewer agents, and publication workflows.
+physics artifact viewers, richer review workflows, and publication workflows.
 
 ## Execution Principles
 
@@ -211,14 +213,13 @@ Completed:
 
 Remaining:
 
-- include reviewer findings in exported bundles;
 - make run bundles more portable as cited artifacts.
 
 ### Phase 2: Add The Physics Reviewer Loop
 
 Goal: completed analyses are trustworthy enough for exploratory physics work.
 
-Status: in progress.
+Status: mostly complete for the first Pythia workbench loop.
 
 Completed:
 
@@ -227,19 +228,21 @@ Completed:
 - checks for low statistics, missing artifacts, event-count mismatches, overflow,
   suspicious cuts, process/sample mismatch, and log warning/error markers;
 - regression coverage for deterministic quality rules.
-
-Needed:
-
 - model-backed Physics Reviewer Agent that consumes deterministic quality
   findings and checks interpretation text against evidence;
 - reviewer checks for unit issues, figure/summary mismatch, untraceable
   numbers, missing citations, and unsupported physical claims;
 - reviewer findings in Run Evidence and exports;
-- structured quality summaries that downstream agents must respect;
+- structured reviewer output that downstream agents must respect;
 - regression coverage for reviewer input shaping, parsing, and fallback paths.
 
-This is the current near-term priority because it is the bridge from
-"reproducible run" to "scientific work product."
+Needed:
+
+- fresh smoke runs that exercise persisted reviewer artifacts end to end;
+- stronger reviewer checks once external HEP references are available.
+
+The next trust gap is not another internal checker. It is external physics
+grounding: citations, public data, and reference measurements.
 
 ### Phase 3: Become Domain-Ready For HEP
 
@@ -315,35 +318,37 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-Physics Reviewer Agent v1.
+HEP Source Connectors v1.
 
 Why: Claude Science's differentiator is not just that it runs tools. It checks
 whether artifacts are traceable, figures match code, calculations are sound, and
-outputs can be reproduced. Vidura now has deterministic run-quality checks. The
-next step is a reviewer agent that reads the evidence, summary, charts, and
-quality findings, then flags unsupported interpretation before the user treats a
-run as science.
+outputs can be reproduced against scientific sources. Vidura now has local
+Pythia execution, reproducible runs, deterministic quality checks, and a first
+physics reviewer. The next step is domain grounding: build a small HEP reference
+connector layer that can retrieve and cite arXiv, INSPIRE, HEPData, and PDG
+sources without turning the app into a generic web search tool.
 
 Scope:
 
-- consume `RunQualityAnalyzer` findings as hard input;
-- check final summary text and chart claims against `simulation_spec.json`,
-  `summary.json`, chart payloads, logs, and artifacts;
-- surface compact reviewer findings in Run Evidence;
-- persist/export reviewer notes if this can be done without a broad data-model
-  rewrite;
-- add deterministic regression coverage for input construction, response
-  parsing, and fallback behavior;
-- no live OpenAI calls in the regression harness.
+- add a narrow `HEPReference`/`HEPReferenceConnector` model and source-specific
+  clients/helpers for arXiv, INSPIRE, HEPData, and PDG;
+- build a deterministic reference-pack assembler that normalizes titles,
+  authors/collaborations, IDs, URLs, abstracts/snippets, and source labels;
+- expose a compact reference pack in the existing research surface without a
+  broad UI redesign;
+- make exported bundles include reference-pack metadata when a run/thread has
+  it;
+- add regression coverage for parser/normalization behavior using fixtures, not
+  live network calls;
+- keep live network calls explicit and bounded, with clear errors/fallbacks.
 
 ## Next 8 Product Slices
 
-1. Physics Reviewer Agent v1 that consumes deterministic findings and checks
-   interpretation text against evidence.
-2. HEP source connectors v1: arXiv, INSPIRE, HEPData, PDG.
-3. Analysis Plan Editor so users can review/edit assumptions before execution.
-4. Native physics artifact viewer upgrades: richer histograms, tables, and
+1. HEP source connectors v1: arXiv, INSPIRE, HEPData, PDG.
+2. Analysis Plan Editor so users can review/edit assumptions before execution.
+3. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
+4. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
 5. Reusable HEP analysis templates and skills.
 6. Local compute session model with environment capture, preparing for SSH/HPC.
 7. Portable cited run bundles with stronger manifest/environment capture.
