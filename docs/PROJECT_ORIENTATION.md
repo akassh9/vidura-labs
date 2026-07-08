@@ -59,6 +59,10 @@ that check final interpretation text against run evidence and deterministic
 quality findings. Completed simulation runs also get a deterministic baseline
 HEP `reference_pack.json` artifact with typed arXiv, INSPIRE, HEPData, and PDG
 references that can be displayed in Run Evidence and included in exports.
+Completed runs can explicitly refresh that reference pack from Run Evidence
+using bounded arXiv, INSPIRE, HEPData, and PDG retrieval. Refreshed packs store
+per-source statuses in `source_statuses` and exports serialize the persisted
+pack without live network calls.
 
 ## Runtime Pipeline
 
@@ -84,7 +88,10 @@ references that can be displayed in Run Evidence and included in exports.
     evidence, Run Quality findings, chart summaries, and logs, with deterministic
     fallback if model review is unavailable.
 13. `HEPReferencePackAssembler` writes a deterministic baseline reference pack
-    for completed runs; live source refresh is the next implementation step.
+    for completed runs.
+14. The user-triggered Refresh References action can update `reference_pack.json`
+    from arXiv, INSPIRE, HEPData, and PDG without making normal run completion
+    or export depend on network access.
 
 ## Supported Analysis Families
 
@@ -108,9 +115,9 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add HEP Reference Pack Retrieval v1 so completed runs can explicitly refresh
-   references from arXiv, INSPIRE, HEPData, and PDG without making run
-   completion depend on network access.
+1. Add Reference-Grounded Physics Reviewer v2 so reviewer findings consume
+   persisted HEP reference packs and flag missing citations, failed source
+   coverage, and unsupported external-physics claims.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of
