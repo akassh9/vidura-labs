@@ -13,7 +13,7 @@ enum RunQualitySeverity: String, Codable, CaseIterable {
     case error
 }
 
-struct RunQualityFinding: Codable, Identifiable {
+struct RunQualityFinding: Codable, Identifiable, Equatable {
     let id: String
     let severity: RunQualitySeverity
     let title: String
@@ -21,7 +21,7 @@ struct RunQualityFinding: Codable, Identifiable {
     let evidence: [String]
 }
 
-struct RunQualityRunSnapshot {
+struct RunQualityRunSnapshot: Codable, Equatable {
     let id: String
     let title: String
     let status: String
@@ -29,7 +29,7 @@ struct RunQualityRunSnapshot {
     let configuration: [String: String]
 }
 
-struct RunQualitySpecSnapshot {
+struct RunQualitySpecSnapshot: Codable, Equatable {
     let eventCount: Int?
     let analysisFamily: String?
     let outputFiles: [String]
@@ -37,14 +37,14 @@ struct RunQualitySpecSnapshot {
     let cutsSettings: [String]
 }
 
-struct RunQualityArtifactSnapshot {
+struct RunQualityArtifactSnapshot: Codable, Equatable {
     let label: String
     let kind: String
     let path: String
     let byteSize: UInt64?
 }
 
-struct RunQualityInput {
+struct RunQualityInput: Codable, Equatable {
     let run: RunQualityRunSnapshot
     let spec: RunQualitySpecSnapshot?
     let summaryMetrics: [String: String]

@@ -38,6 +38,18 @@ private func expectFinding(
     try expectEqual(finding.severity, severity, "\(message) severity")
 }
 
+private func expectReviewerFinding(
+    _ findings: [PhysicsReviewerFinding],
+    id: String,
+    severity: RunQualitySeverity,
+    _ message: String
+) throws {
+    guard let finding = findings.first(where: { $0.id == id }) else {
+        try fail("\(message): missing \(id)")
+    }
+    try expectEqual(finding.severity, severity, "\(message) severity")
+}
+
 private func testSummaryParsing() throws {
     let parsed = RunnerService.parseSummaryLines("""
     generated_events=200
@@ -244,6 +256,147 @@ private func testRunQualityAnalyzer() throws {
     )
 }
 
+private func testPhysicsReviewerInputConstruction() throws {
+    let quality = qualityInput(
+        eventCount: 200,
+        summaryEvents: 200,
+        compileLog: "warning: fixture compile warning"
+    )
+    let qualityFindings = RunQualityAnalyzer.analyze(quality)
+    let chart = ChartPayload(
+        chartType: .line,
+        title: "Transverse Momentum Spectrum",
+        xLabel: "pT [GeV]",
+        yLabel: "Count",
+        series: [
+            ChartSeries(
+                label: "charged",
+                points: [
+                    ChartPoint(x: 1.0, y: 12.0),
+                    ChartPoint(x: 2.0, y: 4.0)
+                ]
+            )
+        ],
+        metrics: [ChartMetric(label: "mean_pt", value: "1.8", unit: "GeV")]
+    )
+    let messages = [
+        PhysicsReviewerMessageSnapshot(
+            role: "assistant",
+            sender: "result",
+            content: "The pT spectrum is based on only 200 generated events.",
+            timestamp: "2026-07-07T12:00:00Z"
+        )
+    ]
+
+    let input = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: quality,
+        chartPayloads: [chart],
+        messages: messages,
+        qualityFindings: qualityFindings,
+        finalSummaryText: ""
+    )
+
+    try expectEqual(input.run.id, "quality-fixture", "reviewer input preserves run id")
+    try expectEqual(input.chartSummaries.first?.pointCount, 2, "reviewer input summarizes chart points")
+    try expectEqual(input.chartSummaries.first?.metricSummaries.first, "mean_pt=1.8 GeV", "reviewer input summarizes metrics")
+    try expect(input.logSnippets.contains(where: { $0.name == "compile.log" }), "reviewer input keeps warning log snippets")
+
+    let derivedSummary = PhysicsReviewerEvidenceBuilder.finalSummaryText(explicit: nil, messages: messages)
+    try expectContains(derivedSummary, "200 generated events", "reviewer final summary fallback uses result message")
+
+    let payload = PhysicsReviewerEvidenceBuilder.promptPayload(input)
+    try expectContains(payload, "\"quality_findings\"", "reviewer prompt payload includes quality findings")
+    try expectContains(payload, "\"final_summary_text\"", "reviewer prompt payload includes final summary text")
+}
+
+private func testPhysicsReviewerResponseParsing() throws {
+    let qualityFindings = RunQualityAnalyzer.analyze(qualityInput(eventCount: 200, summaryEvents: 200))
+    let parsed = PhysicsReviewerAgent.parseResponseJSON(
+        """
+        {
+          "findings": [
+            {
+              "severity": "info",
+              "category": "unsupported_interpretation",
+              "message": "The final summary stays within the supplied evidence.",
+              "evidence_references": ["summary.json"]
+            }
+          ]
+        }
+        """,
+        qualityFindings: qualityFindings
+    )
+
+    guard let parsed else {
+        try fail("valid reviewer JSON should parse")
+    }
+
+    try expect(parsed.contains(where: { $0.category == .unsupportedInterpretation }), "parsed reviewer response keeps model finding")
+    try expectReviewerFinding(
+        parsed,
+        id: "reviewer-quality-low-event-count",
+        severity: .warning,
+        "parser enforces Run Quality warning"
+    )
+
+    let malformed = PhysicsReviewerAgent.parseResponseJSON(
+        #"{"findings":[{"severity":"warning","message":"missing category","evidence_references":[]}]}"#,
+        qualityFindings: []
+    )
+    try expect(malformed == nil, "malformed reviewer JSON returns nil for fallback")
+}
+
+private func testPhysicsReviewerFallback() throws {
+    let quality = qualityInput(eventCount: 200, summaryEvents: 200)
+    let qualityFindings = RunQualityAnalyzer.analyze(quality)
+    let input = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: quality,
+        chartPayloads: [],
+        messages: [],
+        qualityFindings: qualityFindings,
+        finalSummaryText: "This is a clean high-statistics run."
+    )
+
+    let fallback = PhysicsReviewerAgent.fallbackFindings(
+        input: input,
+        reason: "fixture OpenAI failure"
+    )
+    try expectReviewerFinding(
+        fallback,
+        id: "reviewer-quality-low-event-count",
+        severity: .warning,
+        "fallback preserves Run Quality warning"
+    )
+    try expect(
+        !fallback.contains(where: { $0.severity == .info && $0.message.lowercased().contains("clean") }),
+        "fallback does not summarize a warning run as clean"
+    )
+
+    let cleanQuality = qualityInput()
+    let cleanInput = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: cleanQuality,
+        chartPayloads: [],
+        messages: [],
+        qualityFindings: RunQualityAnalyzer.analyze(cleanQuality),
+        finalSummaryText: "The run completed."
+    )
+    let cleanFallback = PhysicsReviewerAgent.fallbackFindings(
+        input: cleanInput,
+        reason: "fixture OpenAI failure"
+    )
+    try expectReviewerFinding(
+        cleanFallback,
+        id: "reviewer-fallback-no-model",
+        severity: .info,
+        "clean fallback states model review unavailable"
+    )
+    try expectContains(
+        cleanFallback.first?.message ?? "",
+        "not model-reviewed",
+        "clean fallback avoids overclaiming review"
+    )
+}
+
 private func qualityInput(
     title: String = "Charged multiplicity",
     eventCount: Int = 10_000,
@@ -305,7 +458,10 @@ let tests: [(String, () throws -> Void)] = [
     ("RunnerService.parseSummaryLines", testSummaryParsing),
     ("CodegenAgent.run(spec:)", testDeterministicCodegen),
     ("RunLineageResolver", testRunLineage),
-    ("RunQualityAnalyzer", testRunQualityAnalyzer)
+    ("RunQualityAnalyzer", testRunQualityAnalyzer),
+    ("PhysicsReviewerEvidenceBuilder", testPhysicsReviewerInputConstruction),
+    ("PhysicsReviewerAgent.parseResponseJSON", testPhysicsReviewerResponseParsing),
+    ("PhysicsReviewerAgent.fallbackFindings", testPhysicsReviewerFallback)
 ]
 
 do {

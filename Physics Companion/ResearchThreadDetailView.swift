@@ -1358,6 +1358,7 @@ private struct RunsConfigurationPanel: View {
                                 chartPayloads: messages
                                     .filter { $0.originRunId == run.id }
                                     .compactMap(\.chartPayload),
+                                messages: messages.filter { $0.originRunId == run.id },
                                 lineage: lineage,
                                 onCompareToSource: { sourceRunId, derivedRunId in
                                     compareLeftRunId = sourceRunId
@@ -2052,6 +2053,7 @@ private struct RunEvidenceCard: View {
     @EnvironmentObject private var orchestrator: OrchestratorService
     let run: SimulationRun
     let chartPayloads: [ChartPayload]
+    let messages: [ChatMessage]
     let lineage: RunLineage
     let onCompareToSource: (String, String) -> Void
     @State private var selectedArtifact: ArtifactRef?
@@ -2078,6 +2080,16 @@ private struct RunEvidenceCard: View {
 
     private var qualityFindings: [RunQualityFinding] {
         RunQualityAdapter.findings(for: run, artifacts: artifacts)
+    }
+
+    private var reviewerFindings: [PhysicsReviewerFinding] {
+        PhysicsReviewerAdapter.findings(
+            for: run,
+            artifacts: artifacts,
+            chartPayloads: chartPayloads,
+            messages: messages,
+            qualityFindings: qualityFindings
+        )
     }
 
     var body: some View {
@@ -2223,6 +2235,7 @@ private struct RunEvidenceCard: View {
 
             if run.status == .completed {
                 RunQualityFindingsView(findings: qualityFindings)
+                PhysicsReviewerFindingsView(findings: reviewerFindings)
             }
 
             Divider()
@@ -2802,6 +2815,109 @@ private struct RunQualityFindingRow: View {
     }
 }
 
+private struct PhysicsReviewerFindingsView: View {
+    let findings: [PhysicsReviewerFinding]
+
+    private var errorCount: Int {
+        findings.filter { $0.severity == .error }.count
+    }
+
+    private var warningCount: Int {
+        findings.filter { $0.severity == .warning }.count
+    }
+
+    private var visibleFindings: [PhysicsReviewerFinding] {
+        Array(findings.prefix(4))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: headerIcon)
+                    .font(.caption2)
+                    .foregroundStyle(headerColor)
+                Text("Physics Reviewer")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if errorCount > 0 {
+                    MetricChip(label: "Errors", value: "\(errorCount)")
+                }
+                if warningCount > 0 {
+                    MetricChip(label: "Warnings", value: "\(warningCount)")
+                }
+            }
+
+            VStack(spacing: 3) {
+                ForEach(visibleFindings) { finding in
+                    PhysicsReviewerFindingRow(finding: finding)
+                }
+                if findings.count > visibleFindings.count {
+                    Text("\(findings.count - visibleFindings.count) more reviewer findings")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private var headerIcon: String {
+        if errorCount > 0 { return "xmark.octagon.fill" }
+        if warningCount > 0 { return "exclamationmark.triangle.fill" }
+        return "checkmark.seal.fill"
+    }
+
+    private var headerColor: Color {
+        if errorCount > 0 { return .red }
+        if warningCount > 0 { return .orange }
+        return .green
+    }
+}
+
+private struct PhysicsReviewerFindingRow: View {
+    let finding: PhysicsReviewerFinding
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: finding.severity.iconName)
+                .font(.caption2)
+                .foregroundStyle(finding.severity.color)
+                .frame(width: 14)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(finding.category.displayName)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Text(finding.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                if !finding.evidenceReferences.isEmpty {
+                    Text(finding.evidenceReferences.joined(separator: "; "))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(finding.severity.color.opacity(0.08))
+        )
+    }
+}
+
 private extension RunQualitySeverity {
     var iconName: String {
         switch self {
@@ -2816,6 +2932,21 @@ private extension RunQualitySeverity {
         case .info: return .green
         case .warning: return .orange
         case .error: return .red
+        }
+    }
+}
+
+private extension PhysicsReviewerCategory {
+    var displayName: String {
+        switch self {
+        case .unsupportedInterpretation: return "Unsupported interpretation"
+        case .evidenceConflict: return "Evidence conflict"
+        case .citationGap: return "Citation gap"
+        case .unitAmbiguity: return "Unit ambiguity"
+        case .ignoredQualityFinding: return "Run Quality not addressed"
+        case .cutProcessWording: return "Cut/process wording"
+        case .artifactGap: return "Artifact gap"
+        case .reviewerUnavailable: return "Reviewer unavailable"
         }
     }
 }
@@ -2938,6 +3069,53 @@ private enum RunQualityAdapter {
     }
 }
 
+private enum PhysicsReviewerAdapter {
+    static func findings(
+        for run: SimulationRun,
+        artifacts: [ArtifactRef],
+        chartPayloads: [ChartPayload],
+        messages: [ChatMessage],
+        qualityFindings: [RunQualityFinding]
+    ) -> [PhysicsReviewerFinding] {
+        if let envelope = reviewerEnvelope(in: artifacts) {
+            return envelope.findings
+        }
+
+        let qualityInput = RunQualityAdapter.input(for: run, artifacts: artifacts)
+        let messageSnapshots = messages.map { message in
+            PhysicsReviewerMessageSnapshot(
+                role: message.role,
+                sender: message.sender.rawValue,
+                content: message.content,
+                timestamp: message.timestamp
+            )
+        }
+        let finalSummary = PhysicsReviewerEvidenceBuilder.finalSummaryText(
+            explicit: nil,
+            messages: messageSnapshots
+        )
+        let input = PhysicsReviewerEvidenceBuilder.buildInput(
+            qualityInput: qualityInput,
+            chartPayloads: chartPayloads,
+            messages: messageSnapshots,
+            qualityFindings: qualityFindings,
+            finalSummaryText: finalSummary
+        )
+        return PhysicsReviewerAgent.fallbackFindings(
+            input: input,
+            reason: "No persisted physics_reviewer.json artifact."
+        )
+    }
+
+    private static func reviewerEnvelope(in artifacts: [ArtifactRef]) -> PhysicsReviewerEnvelope? {
+        guard let url = RunQualityAdapter.artifactURL(named: "physics_reviewer.json", in: artifacts),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(PhysicsReviewerEnvelope.self, from: data)
+    }
+}
+
 private enum RunEvidenceResolver {
     private static let expectedEvidenceNames: [(name: String, kind: String)] = [
         ("run.cc", "source"),
@@ -2945,7 +3123,8 @@ private enum RunEvidenceResolver {
         ("summary.json", "summary"),
         ("summary_lines.txt", "summary"),
         ("compile.log", "log"),
-        ("run.log", "log")
+        ("run.log", "log"),
+        ("physics_reviewer.json", "review")
     ]
 
     private static let standaloneEvidenceNames = Set(expectedEvidenceNames.map(\.name))
@@ -3031,8 +3210,10 @@ private enum RunEvidenceResolver {
             return ("log", "Logs", "terminal", 3)
         case "data", "plot":
             return ("data", "Plots and Tables", "chart.xyaxis.line", 4)
+        case "review":
+            return ("review", "Reviewer", "checkmark.seal", 5)
         default:
-        return ("other", "Other Evidence", "doc", 5)
+        return ("other", "Other Evidence", "doc", 6)
         }
     }
 
@@ -3048,8 +3229,10 @@ private enum RunEvidenceResolver {
             return ("log", "Logs", "terminal", 3)
         case "data":
             return ("data", "Plots and Tables", "chart.xyaxis.line", 4)
+        case "review":
+            return ("review", "Reviewer", "checkmark.seal", 5)
         default:
-            return ("other", "Other Evidence", "doc", 5)
+            return ("other", "Other Evidence", "doc", 6)
         }
     }
 
@@ -3183,6 +3366,7 @@ private enum RunBundleExporter {
         let simulationSpec: [String: String]
         let summaryMetrics: [String: String]
         let qualityFindings: [RunQualityFinding]
+        let reviewerFindings: [PhysicsReviewerFinding]
         let charts: [ChartSummary]
         let artifacts: [BundleArtifact]
         let missingArtifacts: [MissingArtifact]
@@ -3198,6 +3382,7 @@ private enum RunBundleExporter {
             case simulationSpec = "simulation_spec"
             case summaryMetrics = "summary_metrics"
             case qualityFindings = "quality_findings"
+            case reviewerFindings = "reviewer_findings"
             case charts
             case artifacts
             case missingArtifacts = "missing_artifacts"
@@ -3305,6 +3490,13 @@ private enum RunBundleExporter {
             copiedArtifacts: copiedArtifacts,
             summaryMetrics: summaryMetrics
         )
+        let reviewerFindings = reviewerFindings(
+            run: run,
+            bundleURL: bundleURL,
+            copiedArtifacts: copiedArtifacts,
+            summaryMetrics: summaryMetrics,
+            qualityFindings: qualityFindings
+        )
         let chartSummaries = chartPayloads.map { chart in
             ChartSummary(
                 title: chart.title,
@@ -3334,6 +3526,7 @@ private enum RunBundleExporter {
             simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
             qualityFindings: qualityFindings,
+            reviewerFindings: reviewerFindings,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3346,6 +3539,7 @@ private enum RunBundleExporter {
             simulationSpec: simulationSpec,
             summaryMetrics: summaryMetrics,
             qualityFindings: qualityFindings,
+            reviewerFindings: reviewerFindings,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3500,11 +3694,66 @@ private enum RunBundleExporter {
         return RunQualityAnalyzer.analyze(input)
     }
 
+    private static func reviewerFindings(
+        run: SimulationRun,
+        bundleURL: URL,
+        copiedArtifacts: [BundleArtifact],
+        summaryMetrics: [String: String],
+        qualityFindings: [RunQualityFinding]
+    ) -> [PhysicsReviewerFinding] {
+        if let envelope = decodePhysicsReviewerEnvelope(from: bundleURL.appendingPathComponent("physics_reviewer.json")) {
+            return envelope.findings
+        }
+
+        let specSnapshot = decodeSimulationSpec(from: bundleURL.appendingPathComponent("simulation_spec.json"))
+            .map { RunQualityAdapter.specSnapshot($0) }
+        let qualityInput = RunQualityInput(
+            run: RunQualityRunSnapshot(
+                id: run.id,
+                title: run.title,
+                status: run.status.rawValue,
+                eventCount: run.eventCount,
+                configuration: run.configuration
+            ),
+            spec: specSnapshot,
+            summaryMetrics: summaryMetrics,
+            artifacts: copiedArtifacts.map { artifact in
+                let url = bundleURL.appendingPathComponent(artifact.path)
+                return RunQualityArtifactSnapshot(
+                    label: artifact.label,
+                    kind: artifact.kind,
+                    path: url.path,
+                    byteSize: artifact.byteSize
+                )
+            },
+            compileLog: textFile(at: bundleURL.appendingPathComponent("compile.log")),
+            runLog: textFile(at: bundleURL.appendingPathComponent("run.log"))
+        )
+        let input = PhysicsReviewerEvidenceBuilder.buildInput(
+            qualityInput: qualityInput,
+            chartPayloads: [],
+            messages: [],
+            qualityFindings: qualityFindings,
+            finalSummaryText: run.resultSummary ?? ""
+        )
+        return PhysicsReviewerAgent.fallbackFindings(
+            input: input,
+            reason: "No persisted physics_reviewer.json artifact in exported bundle."
+        )
+    }
+
     private static func decodeSimulationSpec(from url: URL) -> SimulationSpec? {
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
         return try? JSONDecoder().decode(SimulationSpec.self, from: data)
+    }
+
+    private static func decodePhysicsReviewerEnvelope(from url: URL) -> PhysicsReviewerEnvelope? {
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(PhysicsReviewerEnvelope.self, from: data)
     }
 
     private static func textFile(at url: URL) -> String? {
@@ -3516,6 +3765,7 @@ private enum RunBundleExporter {
         simulationSpec: [String: String],
         summaryMetrics: [String: String],
         qualityFindings: [RunQualityFinding],
+        reviewerFindings: [PhysicsReviewerFinding],
         charts: [ChartSummary],
         artifacts: [BundleArtifact],
         missingArtifacts: [MissingArtifact],
@@ -3585,6 +3835,20 @@ private enum RunBundleExporter {
                 lines.append("- `\(finding.severity.rawValue)`: \(finding.title) - \(finding.detail)")
                 if !finding.evidence.isEmpty {
                     lines.append("  - Evidence: \(finding.evidence.joined(separator: "; "))")
+                }
+            }
+        }
+
+        lines.append("")
+        lines.append("## Physics Reviewer")
+        lines.append("")
+        if reviewerFindings.isEmpty {
+            lines.append("No reviewer findings were generated.")
+        } else {
+            for finding in reviewerFindings {
+                lines.append("- `\(finding.severity.rawValue)`: \(finding.category.rawValue) - \(finding.message)")
+                if !finding.evidenceReferences.isEmpty {
+                    lines.append("  - Evidence: \(finding.evidenceReferences.joined(separator: "; "))")
                 }
             }
         }
