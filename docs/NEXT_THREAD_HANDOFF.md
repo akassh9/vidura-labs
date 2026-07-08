@@ -317,92 +317,116 @@ Physics Reviewer Agent v1:
 - Known residual gap: no fresh simulation smoke run and no manual native
   UI/export click-through of a newly generated reviewer artifact.
 
+HEP Source Connectors v1:
+
+- PR #17: `https://github.com/akassh9/vidura-labs/pull/17`
+- Merged at `82840f92fc65154851f137939a08ef8622f309c5`.
+- Added typed `HEPReference`, `HEPReferencePack`, and `HEPReferenceSource`.
+- Added connector helpers/parsers for arXiv, INSPIRE, HEPData, and PDG.
+- Added deterministic reference-pack assembly with DOI, arXiv, INSPIRE,
+  HEPData, URL, and title dedupe while preserving source attribution and IDs.
+- Completed runs now get a deterministic baseline `reference_pack.json`
+  evidence artifact.
+- Run Evidence shows a compact References block when a reference pack exists.
+- Export Run Bundle includes `reference_pack` in `manifest.json` and a
+  `## References` section in `run_report.md` when present.
+- Harness coverage in `./script/reproducibility_regression.sh`:
+  - arXiv Atom parsing and ID normalization;
+  - INSPIRE JSON result normalization;
+  - HEPData record normalization;
+  - PDG record normalization;
+  - DOI/arXiv/INSPIRE/HEPData/URL/title dedupe;
+  - export-style reference-pack serialization.
+- CTO review validation before merge:
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch from `.codex/DerivedData`.
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `git diff --check origin/main...HEAD` passed.
+  - `git diff --cached --check` passed.
+  - Tracked-file hygiene and diff/staged diff secret scans were clean.
+  - GitHub reported no checks configured for the branch.
+- Known residual gap: no fresh simulation smoke run, no manual native UI/export
+  click-through, and live fetch helpers are not yet wired into automatic or
+  user-triggered retrieval. New completed runs get the deterministic baseline
+  HEP reference pack.
+
 ## Next Product Slice
 
-HEP Source Connectors v1.
+HEP Reference Pack Retrieval v1.
 
-Why this next: the run record is reproducible, regression-tested, quality
-checked, and model-reviewed against local evidence. The next trust problem is
-external grounding. Vidura needs physics-native source packs so future summaries
-and reviewers can cite real HEP literature, reference data, and canonical facts.
+Why this next: Vidura now has typed source models, parsers, and baseline
+reference packs. The next trust gap is using those connectors in the product.
+Users need an explicit way to refresh a run's references from arXiv, INSPIRE,
+HEPData, and PDG without making simulation completion depend on network access.
 
-This should be the first domain-source layer, not a broad web browser. Keep it
-small, typed, and testable.
+This should stay small: a bounded retrieval workflow that updates
+`reference_pack.json`, shows partial source failures, and preserves deterministic
+export behavior.
 
 Recommended scope:
 
-- add typed reference models such as `HEPReference`, `HEPReferencePack`, and
-  source enum values for `arxiv`, `inspire`, `hepdata`, and `pdg`;
-- add small source-specific connector helpers/clients for:
-  - arXiv Atom API search and ID URL normalization;
-  - INSPIRE literature search/result normalization;
-  - HEPData record/search normalization where the public API shape is stable;
-  - PDG canonical links/search seeds for common particles/constants;
-- add a deterministic reference-pack assembler that can merge/dedupe references
-  by DOI/arXiv/INSPIRE/HEPData/URL and preserve source attribution;
-- expose a compact reference pack in the existing research surface. Prefer a
-  small "References" block or side-panel section over broad navigation work;
-- include reference-pack metadata in Export Run Bundle if straightforward;
-- add fixture-based regression coverage for parsing, normalization, dedupe, and
-  export serialization. Do not make the harness depend on live network calls;
-- make live network failures visible and non-fatal.
-
-Connector result fields to prioritize:
-
-- source;
-- title;
-- authors or collaboration;
-- year;
-- abstract/snippet;
-- DOI;
-- arXiv ID;
-- INSPIRE record ID;
-- HEPData record ID;
-- URL;
-- tags/observables when available.
+- add a user-triggered Refresh References action for completed runs, probably in
+  the existing Run Evidence card near the References block;
+- build deterministic query construction from run title, original prompt,
+  `simulation_spec.json`, analysis family, process settings, and chart labels;
+- call arXiv, INSPIRE, HEPData, and PDG helpers behind a small service with
+  bounded result counts and per-source error capture;
+- merge live results with the existing baseline pack using
+  `HEPReferencePackAssembler`, preserving all source-specific IDs and tags;
+- persist the refreshed `reference_pack.json` artifact and update Run Evidence;
+- surface compact retrieval state: last refreshed time, source counts, and
+  partial failures;
+- keep Export Run Bundle deterministic: serialize persisted reference packs
+  only, never fetch during export;
+- add fixture-driven regression coverage for query construction, partial source
+  failure handling, merge behavior, and status serialization. Do not make the
+  harness depend on live network calls.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
   Run Quality, Physics Reviewer, and regression harness behavior remains intact;
-- source records preserve source attribution and stable URLs;
-- dedupe rules do not silently drop source-specific identifiers;
+- refreshing references is explicit and non-fatal when one source fails;
+- refreshed packs preserve baseline references plus live source identifiers;
 - no schema migration unless the agent can justify why current messages,
-  artifacts, or run configuration cannot carry the first reference pack;
+  artifacts, or run configuration cannot carry refresh status;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Keep the first connector slice narrow. The goal is not complete literature
-automation; it is a reusable, typed source layer that future summary/reviewer
-agents can consume.
+Keep retrieval explicitly user-triggered for this slice. Automatic source
+retrieval during every simulation run can come later after we understand latency,
+rate limits, and failure behavior.
 
 Suggested shape:
 
-- Put pure models and normalization helpers somewhere reusable by the app and
-  `script/reproducibility_regression.sh`.
-- Isolate live HTTP fetching behind small connector methods so parser tests can
-  run from local fixtures.
-- Start with a reference-pack action/path that can be triggered from existing
-  thread or run context without redesigning the whole UI.
-- Keep any OpenAI use optional. If model-assisted query planning is added, it
-  must have deterministic fallback query strings.
-- Prefer storing reference packs as artifacts/messages before adding a schema
-  migration.
-- Make bundle export serialize existing reference packs only; export should not
-  perform live network calls.
+- Reuse `HEPReferences.swift`; do not introduce a parallel source model.
+- Prefer a small `HEPReferenceRetrievalService` or equivalent helper that
+  returns references plus per-source status.
+- Keep query building pure and fixture-tested.
+- Make the Run Evidence button disabled or visibly busy while refresh is
+  running.
+- If a source fails, keep successful sources and show the failed source/reason in
+  the References block or artifact metadata.
+- Store refresh status inside `reference_pack.json` only if doing so does not
+  make the format awkward; otherwise add a small sidecar artifact instead of a
+  schema migration.
+- A small live smoke query is useful if network is available, but the regression
+  harness must stay fixture-only.
 
 ## Acceptance Criteria
 
-- A user-visible reference pack can be generated or surfaced for a HEP-oriented
-  prompt/run without requiring schema migration.
-- Fixture tests cover arXiv, INSPIRE, and at least one HEPData or PDG
-  normalization path.
-- Dedupe preserves multiple source IDs for the same reference.
+- Completed Run Evidence cards can refresh references on demand.
+- Refreshed packs merge with the deterministic baseline and preserve source
+  attribution/IDs.
+- Partial source failures are visible and do not fail the whole refresh.
+- Fixture tests cover query construction, source-status serialization, partial
+  failure merge behavior, and no-network fallback.
 - Existing Physics Reviewer and Run Quality harness cases still pass.
-- Export behavior is unchanged, or reference metadata is added deterministically if
-  included.
+- Export behavior remains deterministic and serializes the persisted refreshed
+  pack if present.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - `./script/reproducibility_regression.sh` succeeds.
@@ -450,5 +474,6 @@ sqlite3 "$HOME/Library/Application Support/com.AL.PhysicsCompanion/research.db" 
   exported run bundles.
 - Do not revert unrelated user or agent changes.
 - Back up live Application Support DB before manual data patching.
-- Keep export deterministic and evidence-driven; export should serialize existing
-  reviewer findings, not call OpenAI.
+- Keep export deterministic and evidence-driven; export should serialize
+  existing reviewer findings and reference packs, not call OpenAI or live source
+  APIs.
