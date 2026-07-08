@@ -1338,6 +1338,7 @@ final class OrchestratorService: ObservableObject {
                 chartPayloads: chartPayloads,
                 messages: messageSnapshots,
                 qualityFindings: qualityFindings,
+                referencePack: reviewerReferencePack(in: run.artifacts),
                 finalSummaryText: finalSummaryText
             )
             let findings = await PhysicsReviewerAgent.run(
@@ -1620,6 +1621,14 @@ final class OrchestratorService: ObservableObject {
             return nil
         }
         return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func reviewerReferencePack(in artifacts: [ArtifactRef]) -> HEPReferencePack? {
+        guard let url = reviewerArtifactURL(named: "reference_pack.json", in: artifacts),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(HEPReferencePack.self, from: data)
     }
 
     private func reviewerArtifactURL(named fileName: String, in artifacts: [ArtifactRef]) -> URL? {
