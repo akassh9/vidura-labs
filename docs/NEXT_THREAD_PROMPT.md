@@ -18,7 +18,7 @@ Start by reading:
 
 Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
 
-Your task: implement the next slice, Physics Reviewer Agent v1.
+Your task: implement the next slice, HEP Source Connectors v1.
 
 Context:
 - Run Evidence / Provenance exists.
@@ -29,61 +29,61 @@ Context:
 - Run Lineage & Reproducibility Surface is merged.
 - Reproducibility Regression Harness is merged.
 - Run Quality / Sanity Checks is merged.
-- The app can now produce, replay, compare, export, trace, quality-check, and regression-test the run record.
-- The next trust gap is interpretation: a completed run can have a plausible-looking summary that overstates the evidence, ignores quality warnings, mislabels cuts/processes, or describes charts/metrics incorrectly.
+- Physics Reviewer Agent v1 is merged.
+- The app can now produce, replay, compare, export, trace, quality-check, and model-review the run record.
+- The next trust gap is external grounding: future summaries and reviewers need typed HEP references, public data links, and canonical source attribution instead of generic unsupported claims.
 
 Implementation target:
-1. Build on `RunQualityAnalyzer`; do not duplicate or replace deterministic quality checks.
-2. Add a small model-backed `PhysicsReviewerAgent` or equivalent helper using `OpenAIClient` structured output.
-3. Add a pure input assembly layer that gathers completed-run evidence:
-   - `simulation_spec.json`
-   - `summary.json`
-   - chart payloads/messages
-   - `compile.log` and `run.log` snippets or marker summaries
-   - artifact names/sizes/kinds
-   - deterministic `RunQualityAnalyzer` findings
-   - the final physics summary text
-4. Return structured reviewer findings with severity, category, message, and evidence references where possible.
-5. Reviewer findings must respect deterministic quality findings. If Run Quality has warnings/errors, the reviewer must not summarize the run as clean.
-6. Include deterministic fallback behavior when OpenAI is unavailable or returns malformed output.
-7. Surface compact reviewer findings in Run Evidence near the Run Quality block. Keep the UI dense and operational.
-8. Include reviewer notes in Export Run Bundle if this fits the current exporter without a broad refactor.
-9. Add regression coverage to `./script/reproducibility_regression.sh` for pure input construction, response parsing, and fallback behavior. Do not make the harness depend on a live OpenAI call.
-10. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, and the existing regression harness working.
+1. Add typed source models such as `HEPReference`, `HEPReferencePack`, and a source enum covering `arxiv`, `inspire`, `hepdata`, and `pdg`.
+2. Add small source-specific connector helpers/clients for:
+   - arXiv Atom API search and arXiv ID URL normalization
+   - INSPIRE literature search/result normalization
+   - HEPData record/search normalization where the public API shape is stable
+   - PDG canonical links/search seeds for common particles/constants
+3. Add a deterministic reference-pack assembler that merges/dedupes references by DOI, arXiv ID, INSPIRE record ID, HEPData record ID, and URL while preserving all source-specific identifiers.
+4. Expose a compact reference pack in the existing research surface. Prefer a small References block or side-panel section over a broad UI redesign.
+5. Include reference-pack metadata in Export Run Bundle if this fits without a broad exporter refactor.
+6. Add fixture-based regression coverage to `./script/reproducibility_regression.sh` for parsing, normalization, dedupe, and export serialization if included.
+7. Do not make the regression harness depend on live network calls.
+8. Keep live network failures visible and non-fatal.
+9. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, Physics Reviewer, and the existing regression harness working.
 
-Reviewer categories to prioritize:
-- unsupported or overconfident physics interpretation
-- summary claims that conflict with chart payloads or `summary.json`
-- missing citations/reference data when comparing to real measurements
-- unit or observable-name ambiguity
-- deterministic quality warnings that the final summary ignores
-- cuts/process choices that make inclusive/minimum-bias wording misleading
+Connector result fields to prioritize:
+- source
+- title
+- authors or collaboration
+- year
+- abstract/snippet
+- DOI
+- arXiv ID
+- INSPIRE record ID
+- HEPData record ID
+- URL
+- tags/observables when available
 
 Implementation constraints:
-- No schema migration unless you can justify why existing messages, artifacts, or run configuration cannot carry the first reviewer notes.
-- Avoid broad UI redesign. Add a compact operational block to the existing Run Evidence surface.
-- Avoid live OpenAI calls in the regression harness.
+- No schema migration unless you can justify why existing messages, artifacts, or run configuration cannot carry the first reference pack.
+- Avoid broad UI redesign. Add a compact operational reference surface.
+- Export should serialize existing reference packs only; export should not perform live network calls.
+- If model-assisted query planning is added, it must have deterministic fallback query strings.
 - Do not print `.env` or API keys.
 
 Validation:
 1. Run `./script/build_and_run.sh build`.
 2. Run `./script/build_and_run.sh --verify`.
 3. Run `./script/reproducibility_regression.sh`.
-4. Use existing runs if useful:
-   - source: `55C18C16-54E4-4A3C-BFFE-DEEE030A7459`
-   - exact rerun: `98CA353A-941B-4B5A-B6A6-070D89FDE59F`
-   - variant: `B28DBDBC-B49D-4F40-AC6B-7F85113744B1`
-5. Run `git diff --check`.
-6. Confirm no `.env`, local DBs, DerivedData, generated simulation folders, exported bundles, key/cert-like files, or `.codex/backups` are tracked.
+4. Run `git diff --check`.
+5. Confirm no `.env`, local DBs, DerivedData, generated simulation folders, exported bundles, key/cert-like files, or `.codex/backups` are tracked.
+6. Run a diff secret scan before pushing.
 7. Push the branch and open a PR against `akassh9/vidura-labs/main`.
 
 Report back with:
 - PR URL
 - changed files
 - validation commands and results
-- reviewer categories implemented
-- where reviewer findings are surfaced
-- whether reviewer notes are included in exports
+- connector sources implemented
+- how references are surfaced
+- whether reference metadata is included in exports
 - harness cases added
 - known gaps or follow-up recommendations
 ```

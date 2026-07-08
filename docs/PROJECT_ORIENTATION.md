@@ -54,7 +54,9 @@ through the lineage/reproducibility surface. Completed runs also receive
 deterministic Run Quality findings for missing evidence, missing or empty
 declared outputs, low event counts, event-count mismatches, histogram overflow
 markers, suspicious inclusive/minimum-bias wording, and log warning/error
-markers.
+markers. New completed runs also persist first-pass Physics Reviewer findings
+that check final interpretation text against run evidence and deterministic
+quality findings.
 
 ## Runtime Pipeline
 
@@ -76,6 +78,9 @@ markers.
 10. `PlottingAgent` converts artifact files into `ChartPayload`.
 11. `PhysicsSummaryAgent` asks OpenAI for final interpretation, falling back to
     a deterministic summary if needed.
+12. `PhysicsReviewerAgent` reviews completed-run interpretation against
+    evidence, Run Quality findings, chart summaries, and logs, with deterministic
+    fallback if model review is unavailable.
 
 ## Supported Analysis Families
 
@@ -99,8 +104,8 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add Physics Reviewer Agent v1 that consumes deterministic Run Quality
-   findings and checks final interpretation text against run evidence.
+1. Add HEP Source Connectors v1 for arXiv, INSPIRE, HEPData, and PDG reference
+   packs that future summaries and reviewers can cite.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of
