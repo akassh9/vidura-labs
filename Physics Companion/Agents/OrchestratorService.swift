@@ -1359,6 +1359,7 @@ final class OrchestratorService: ObservableObject {
 
         if let attempt = ctx.lastAttempt {
             try await persistEvidenceArtifacts(ctx: ctx, attempt: attempt)
+            try await persistReferencePackEvidence(ctx: ctx, attempt: attempt)
         }
 
         try await store.loadRuns(forThread: ctx.threadId)
@@ -1410,6 +1411,46 @@ final class OrchestratorService: ObservableObject {
         for path in attempt.plotPaths {
             try await appendArtifact(path: path, kind: "data")
         }
+    }
+
+    private func persistReferencePackEvidence(
+        ctx: OrchestratorRunContext,
+        attempt: AttemptExecutionResult
+    ) async throws {
+        let attemptDir = !attempt.generatedCodePath.isEmpty
+            ? URL(fileURLWithPath: attempt.generatedCodePath).deletingLastPathComponent()
+            : PathUtils.simulationsDir
+                .appendingPathComponent(ctx.runId)
+                .appendingPathComponent("attempt_\(ctx.attemptNumber)")
+        try FileManager.default.createDirectory(at: attemptDir, withIntermediateDirectories: true)
+
+        let pack = HEPReferencePackAssembler.baselinePack(
+            query: ctx.originalPrompt,
+            simulationSpec: ctx.spec
+        )
+        guard !pack.references.isEmpty else {
+            return
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(pack)
+        let url = attemptDir.appendingPathComponent("reference_pack.json")
+        try data.write(to: url, options: .atomic)
+
+        let run = try await store.fetchRun(id: ctx.runId)
+        guard !run.artifacts.contains(where: { $0.relativePath == url.path }) else {
+            return
+        }
+
+        let artifact = ArtifactRef(
+            id: UUID().uuidString,
+            kind: "reference",
+            label: "reference_pack.json",
+            relativePath: url.path,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        try await store.addArtifact(runId: ctx.runId, artifact: artifact)
     }
 
     private func persistPhysicsReviewerEvidence(

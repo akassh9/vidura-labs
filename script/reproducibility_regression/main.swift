@@ -397,6 +397,148 @@ private func testPhysicsReviewerFallback() throws {
     )
 }
 
+private func testHEPReferenceParsingAndNormalization() throws {
+    let arxivXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+      <entry>
+        <id>http://arxiv.org/abs/1410.3012v1</id>
+        <published>2014-10-11T00:00:00Z</published>
+        <title>An Introduction to PYTHIA 8.2</title>
+        <summary>Canonical event generator reference.</summary>
+        <author><name>Torbjorn Sjostrand</name></author>
+        <author><name>Peter Z. Skands</name></author>
+        <category term="hep-ph" />
+        <arxiv:doi>10.1016/j.cpc.2015.01.024</arxiv:doi>
+      </entry>
+    </feed>
+    """
+    let arxiv = try ArxivConnector.parse(data: Data(arxivXML.utf8))
+    try expectEqual(arxiv.count, 1, "arXiv fixture parses one entry")
+    try expectEqual(arxiv.first?.arxivId, "1410.3012", "arXiv parser normalizes id and removes version")
+    try expectEqual(arxiv.first?.doi, "10.1016/j.cpc.2015.01.024", "arXiv parser preserves DOI")
+    try expect(arxiv.first?.tags.contains("hep-ph") == true, "arXiv parser preserves category tags")
+
+    let inspireJSON = """
+    {
+      "hits": {
+        "hits": [
+          {
+            "id": "1321709",
+            "metadata": {
+              "titles": [{"title": "An Introduction to PYTHIA 8.2"}],
+              "authors": [{"full_name": "Sjostrand, Torbjorn"}],
+              "dois": [{"value": "https://doi.org/10.1016/j.cpc.2015.01.024"}],
+              "arxiv_eprints": [{"value": "arXiv:1410.3012v2"}],
+              "publication_info": [{"year": 2015}],
+              "keywords": [{"value": "Monte Carlo"}]
+            }
+          }
+        ]
+      }
+    }
+    """
+    let inspire = try InspireConnector.parse(data: Data(inspireJSON.utf8))
+    try expectEqual(inspire.first?.inspireId, "1321709", "INSPIRE parser preserves record id")
+    try expectEqual(inspire.first?.doi, "10.1016/j.cpc.2015.01.024", "INSPIRE parser normalizes DOI")
+    try expectEqual(inspire.first?.arxivId, "1410.3012", "INSPIRE parser normalizes arXiv id")
+
+    let hepDataJSON = """
+    {
+      "@id": "https://www.hepdata.net/record/ins1860766",
+      "name": "Measurement of fixture cross sections",
+      "identifier": ["10.17182/hepdata.12345.v1", "ins1860766"],
+      "sameAs": ["https://inspirehep.net/literature/1860766", "https://arxiv.org/abs/2101.00001"],
+      "datePublished": "2021-02-03",
+      "keywords": ["cross sections"],
+      "description": "Fixture HEPData record."
+    }
+    """
+    let hepData = try HEPDataConnector.parse(data: Data(hepDataJSON.utf8))
+    try expectEqual(hepData.first?.hepDataId, "ins1860766", "HEPData parser preserves record id")
+    try expectEqual(hepData.first?.inspireId, "1860766", "HEPData parser preserves INSPIRE id")
+    try expectEqual(hepData.first?.arxivId, "2101.00001", "HEPData parser preserves arXiv id")
+
+    let pdgJSON = """
+    {
+      "title": "Charged pion mass",
+      "pdgid": "S008M",
+      "year": "2026",
+      "summary": "Fixture PDG quantity.",
+      "url": "https://pdg.lbl.gov"
+    }
+    """
+    let pdg = try PDGConnector.parse(data: Data(pdgJSON.utf8))
+    try expectEqual(pdg.first?.source, .pdg, "PDG parser preserves source")
+    try expectEqual(pdg.first?.year, 2026, "PDG parser preserves year")
+}
+
+private func testHEPReferencePackDedupeAndSerialization() throws {
+    let duplicateArxiv = HEPReference(
+        source: .arxiv,
+        title: "An Introduction to PYTHIA 8.2",
+        authors: ["Torbjorn Sjostrand"],
+        year: 2015,
+        doi: "https://doi.org/10.1016/j.cpc.2015.01.024",
+        arxivId: "1410.3012v1",
+        url: "https://arxiv.org/abs/1410.3012v1",
+        tags: ["pythia"]
+    )
+    let duplicateInspire = HEPReference(
+        source: .inspire,
+        title: "An Introduction to PYTHIA 8.2",
+        year: 2015,
+        doi: "10.1016/j.cpc.2015.01.024",
+        arxivId: "arXiv:1410.3012v2",
+        inspireId: "1321709",
+        url: "https://inspirehep.net/literature/1321709",
+        tags: ["generator"]
+    )
+    let hepData = HEPReference(
+        source: .hepdata,
+        title: "Fixture HEPData record",
+        year: 2021,
+        hepDataId: "ins1860766",
+        url: "https://www.hepdata.net/record/ins1860766",
+        tags: ["hepdata"]
+    )
+
+    let pack = HEPReferencePackAssembler.assemble(
+        query: "fixture query",
+        references: [duplicateArxiv, duplicateInspire, hepData],
+        generatedAt: "2026-07-08T00:00:00Z"
+    )
+    try expectEqual(pack.references.count, 2, "reference assembler dedupes DOI/arXiv duplicates")
+
+    guard let pythia = pack.references.first(where: { $0.title == "An Introduction to PYTHIA 8.2" }) else {
+        try fail("deduped Pythia reference missing")
+    }
+    try expectEqual(Set(pythia.sources), Set([.arxiv, .inspire]), "dedupe preserves source attribution")
+    try expectEqual(pythia.doi, "10.1016/j.cpc.2015.01.024", "dedupe preserves DOI")
+    try expectEqual(pythia.arxivId, "1410.3012", "dedupe preserves normalized arXiv id")
+    try expectEqual(pythia.inspireId, "1321709", "dedupe preserves INSPIRE id")
+    try expect(pack.tags.contains("generator"), "pack preserves merged tags")
+
+    struct ExportFixture: Codable {
+        let referencePack: HEPReferencePack?
+
+        enum CodingKeys: String, CodingKey {
+            case referencePack = "reference_pack"
+        }
+    }
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = try encoder.encode(ExportFixture(referencePack: pack))
+    let json = String(data: data, encoding: .utf8) ?? ""
+    try expectContains(json, "\"reference_pack\"", "export serialization includes reference pack key")
+    try expectContains(json, "\"inspire_id\":\"1321709\"", "export serialization includes INSPIRE id")
+    try expectContains(json, "\"hepdata_id\":\"ins1860766\"", "export serialization includes HEPData id")
+
+    let decoded = try JSONDecoder().decode(ExportFixture.self, from: data)
+    try expectEqual(decoded.referencePack?.references.count, 2, "reference pack export round trips")
+}
+
 private func qualityInput(
     title: String = "Charged multiplicity",
     eventCount: Int = 10_000,
@@ -461,7 +603,9 @@ let tests: [(String, () throws -> Void)] = [
     ("RunQualityAnalyzer", testRunQualityAnalyzer),
     ("PhysicsReviewerEvidenceBuilder", testPhysicsReviewerInputConstruction),
     ("PhysicsReviewerAgent.parseResponseJSON", testPhysicsReviewerResponseParsing),
-    ("PhysicsReviewerAgent.fallbackFindings", testPhysicsReviewerFallback)
+    ("PhysicsReviewerAgent.fallbackFindings", testPhysicsReviewerFallback),
+    ("HEPReference parsing and normalization", testHEPReferenceParsingAndNormalization),
+    ("HEPReferencePack dedupe and serialization", testHEPReferencePackDedupeAndSerialization)
 ]
 
 do {
