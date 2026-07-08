@@ -24,6 +24,7 @@ struct PhysicsReviewerFinding: Codable, Identifiable, Equatable {
     let category: PhysicsReviewerCategory
     let message: String
     let evidenceReferences: [String]
+    let referenceIds: [String]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -31,6 +32,33 @@ struct PhysicsReviewerFinding: Codable, Identifiable, Equatable {
         case category
         case message
         case evidenceReferences = "evidence_references"
+        case referenceIds = "reference_ids"
+    }
+
+    init(
+        id: String,
+        severity: RunQualitySeverity,
+        category: PhysicsReviewerCategory,
+        message: String,
+        evidenceReferences: [String],
+        referenceIds: [String] = []
+    ) {
+        self.id = id
+        self.severity = severity
+        self.category = category
+        self.message = message
+        self.evidenceReferences = evidenceReferences
+        self.referenceIds = referenceIds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.severity = try container.decode(RunQualitySeverity.self, forKey: .severity)
+        self.category = try container.decode(PhysicsReviewerCategory.self, forKey: .category)
+        self.message = try container.decode(String.self, forKey: .message)
+        self.evidenceReferences = try container.decodeIfPresent([String].self, forKey: .evidenceReferences) ?? []
+        self.referenceIds = try container.decodeIfPresent([String].self, forKey: .referenceIds) ?? []
     }
 }
 
@@ -66,6 +94,70 @@ struct PhysicsReviewerLogSnippet: Codable, Equatable {
     let lines: [String]
 }
 
+struct PhysicsReviewerReferencePackSnapshot: Codable, Equatable {
+    let query: String
+    let tags: [String]
+    let references: [PhysicsReviewerReferenceSnapshot]
+    let sourceStatuses: [PhysicsReviewerReferenceSourceStatusSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case query
+        case tags
+        case references
+        case sourceStatuses = "source_statuses"
+    }
+}
+
+struct PhysicsReviewerReferenceSnapshot: Codable, Equatable {
+    let id: String
+    let sources: [String]
+    let title: String
+    let authors: [String]
+    let collaboration: String?
+    let year: Int?
+    let snippet: String?
+    let doi: String?
+    let arxivId: String?
+    let inspireId: String?
+    let hepDataId: String?
+    let url: String?
+    let tags: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sources
+        case title
+        case authors
+        case collaboration
+        case year
+        case snippet
+        case doi
+        case arxivId = "arxiv_id"
+        case inspireId = "inspire_id"
+        case hepDataId = "hepdata_id"
+        case url
+        case tags
+    }
+}
+
+struct PhysicsReviewerReferenceSourceStatusSnapshot: Codable, Equatable {
+    let source: String
+    let state: String
+    let query: String
+    let resultCount: Int
+    let message: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case state
+        case query
+        case resultCount = "result_count"
+        case message
+        case updatedAt = "updated_at"
+    }
+}
+
 struct PhysicsReviewerInput: Codable, Equatable {
     let run: RunQualityRunSnapshot
     let spec: RunQualitySpecSnapshot?
@@ -75,6 +167,7 @@ struct PhysicsReviewerInput: Codable, Equatable {
     let artifacts: [RunQualityArtifactSnapshot]
     let logSnippets: [PhysicsReviewerLogSnippet]
     let qualityFindings: [RunQualityFinding]
+    let referencePack: PhysicsReviewerReferencePackSnapshot?
     let finalSummaryText: String
 
     enum CodingKeys: String, CodingKey {
@@ -86,6 +179,7 @@ struct PhysicsReviewerInput: Codable, Equatable {
         case artifacts
         case logSnippets = "log_snippets"
         case qualityFindings = "quality_findings"
+        case referencePack = "reference_pack"
         case finalSummaryText = "final_summary_text"
     }
 }
@@ -112,6 +206,7 @@ enum PhysicsReviewerEvidenceBuilder {
         chartPayloads: [ChartPayload],
         messages: [PhysicsReviewerMessageSnapshot],
         qualityFindings: [RunQualityFinding],
+        referencePack: HEPReferencePack? = nil,
         finalSummaryText: String
     ) -> PhysicsReviewerInput {
         PhysicsReviewerInput(
@@ -126,6 +221,7 @@ enum PhysicsReviewerEvidenceBuilder {
                 runLog: qualityInput.runLog
             ),
             qualityFindings: qualityFindings,
+            referencePack: referencePack.map(referencePackSnapshot),
             finalSummaryText: finalSummaryText.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
@@ -210,6 +306,44 @@ enum PhysicsReviewerEvidenceBuilder {
             }
             .map { String($0.prefix(240)) }
     }
+
+    private nonisolated static func referencePackSnapshot(_ pack: HEPReferencePack) -> PhysicsReviewerReferencePackSnapshot {
+        PhysicsReviewerReferencePackSnapshot(
+            query: pack.query,
+            tags: pack.tags,
+            references: pack.references.map(referenceSnapshot),
+            sourceStatuses: pack.sourceStatuses.map(sourceStatusSnapshot)
+        )
+    }
+
+    private nonisolated static func referenceSnapshot(_ reference: HEPReference) -> PhysicsReviewerReferenceSnapshot {
+        PhysicsReviewerReferenceSnapshot(
+            id: HEPReferenceNormalizer.stableKey(for: reference),
+            sources: reference.sources.map(\.rawValue),
+            title: reference.title,
+            authors: reference.authors,
+            collaboration: reference.collaboration,
+            year: reference.year,
+            snippet: reference.snippet,
+            doi: reference.doi,
+            arxivId: reference.arxivId,
+            inspireId: reference.inspireId,
+            hepDataId: reference.hepDataId,
+            url: reference.url,
+            tags: reference.tags
+        )
+    }
+
+    private nonisolated static func sourceStatusSnapshot(_ status: HEPReferenceSourceStatus) -> PhysicsReviewerReferenceSourceStatusSnapshot {
+        PhysicsReviewerReferenceSourceStatusSnapshot(
+            source: status.source.rawValue,
+            state: status.state.rawValue,
+            query: status.query,
+            resultCount: status.resultCount,
+            message: status.message,
+            updatedAt: status.updatedAt
+        )
+    }
 }
 
 enum PhysicsReviewerAgent {
@@ -222,12 +356,23 @@ enum PhysicsReviewerAgent {
         let category: PhysicsReviewerCategory
         let message: String
         let evidenceReferences: [String]
+        let referenceIds: [String]
 
         enum CodingKeys: String, CodingKey {
             case severity
             case category
             case message
             case evidenceReferences = "evidence_references"
+            case referenceIds = "reference_ids"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.severity = try container.decode(RunQualitySeverity.self, forKey: .severity)
+            self.category = try container.decode(PhysicsReviewerCategory.self, forKey: .category)
+            self.message = try container.decode(String.self, forKey: .message)
+            self.evidenceReferences = try container.decodeIfPresent([String].self, forKey: .evidenceReferences) ?? []
+            self.referenceIds = try container.decodeIfPresent([String].self, forKey: .referenceIds) ?? []
         }
     }
 
@@ -248,7 +393,7 @@ enum PhysicsReviewerAgent {
                 textFormat: OpenAIResponseFormats.physicsReviewer,
                 reasoningEffort: "low"
             )
-            return normalizedFindings(response.findings, qualityFindings: input.qualityFindings)
+            return normalizedFindings(response.findings, input: input)
         } catch {
             return fallbackFindings(input: input, reason: error.localizedDescription)
         }
@@ -256,22 +401,27 @@ enum PhysicsReviewerAgent {
 
     static func parseResponseJSON(
         _ json: String,
-        qualityFindings: [RunQualityFinding]
+        qualityFindings: [RunQualityFinding],
+        input: PhysicsReviewerInput? = nil
     ) -> [PhysicsReviewerFinding]? {
         guard let data = json.data(using: .utf8),
               let response = try? JSONDecoder().decode(ReviewerResponse.self, from: data) else {
             return nil
         }
-        return normalizedFindings(response.findings, qualityFindings: qualityFindings)
+        if let input {
+            return normalizedFindings(response.findings, input: input)
+        }
+        return normalizedFindings(response.findings, qualityFindings: qualityFindings, validReferenceIds: [])
     }
 
     static func fallbackFindings(
         input: PhysicsReviewerInput,
         reason: String
     ) -> [PhysicsReviewerFinding] {
+        var deterministic = deterministicReferenceFindings(input: input)
         let blockingQuality = input.qualityFindings.filter { $0.severity != .info }
-        if blockingQuality.isEmpty {
-            return [
+        if blockingQuality.isEmpty && deterministic.isEmpty {
+            deterministic.append(
                 PhysicsReviewerFinding(
                     id: "reviewer-fallback-no-model",
                     severity: .info,
@@ -279,10 +429,11 @@ enum PhysicsReviewerAgent {
                     message: "Model-backed physics review was unavailable. Deterministic Run Quality did not report warnings or errors, but interpretation claims were not model-reviewed.",
                     evidenceReferences: fallbackEvidenceReferences(input: input, extra: [reason])
                 )
-            ]
+            )
+            return deterministic
         }
 
-        return blockingQuality.map { finding in
+        deterministic.append(contentsOf: blockingQuality.map { finding in
             PhysicsReviewerFinding(
                 id: "reviewer-quality-\(finding.id)",
                 severity: finding.severity,
@@ -290,7 +441,8 @@ enum PhysicsReviewerAgent {
                 message: "Run Quality reported \(finding.title.lowercased()). The reviewer cannot mark this run clean until that deterministic finding is addressed or explained.",
                 evidenceReferences: qualityEvidenceReferences(finding)
             )
-        }
+        })
+        return sortedFindings(dedupedFindings(deterministic))
     }
 
     static func envelope(
@@ -315,6 +467,9 @@ enum PhysicsReviewerAgent {
             if !finding.evidenceReferences.isEmpty {
                 lines.append("  Evidence: \(finding.evidenceReferences.prefix(4).joined(separator: "; "))")
             }
+            if !finding.referenceIds.isEmpty {
+                lines.append("  References: \(finding.referenceIds.prefix(4).joined(separator: ", "))")
+            }
         }
         if findings.count > 4 {
             lines.append("- \(findings.count - 4) more reviewer findings in Run Evidence.")
@@ -325,7 +480,15 @@ enum PhysicsReviewerAgent {
     private static let reviewerInstructions = """
     You are PhysicsReviewerAgent for Vidura Labs.
 
-    Review the supplied completed-run evidence. Do not redo deterministic Run Quality checks; treat them as hard input. Check whether the final physics summary text and chart descriptions are supported by simulation_spec.json, summary.json metrics, chart payload summaries, logs, artifact metadata, and Run Quality findings.
+    Review the supplied completed-run evidence. Do not redo deterministic Run Quality checks; treat them as hard input. Check whether the final physics summary text and chart descriptions are supported by simulation_spec.json, summary.json metrics, chart payload summaries, logs, artifact metadata, Run Quality findings, and the supplied persisted reference_pack.
+
+    Reference rules:
+    - Findings may attach reference_ids only from reference_pack.references[].id in the supplied input.
+    - Do not invent citations, URLs, paper titles, DOI/arXiv/INSPIRE/HEPData IDs, or reference IDs.
+    - Use evidence_references for local artifacts and Run Quality IDs; use reference_ids only for supplied HEP references.
+    - Treat local simulation artifacts as support for what this run produced, not as support for claims about external measurements, PDG/literature agreement, or published results.
+    - If the final text makes citation-sensitive claims and no supplied reference supports them, emit citation_gap or unsupported_interpretation instead of attaching an unrelated reference.
+    - If source_statuses show failed or partial_failure sources, do not treat source coverage as complete.
 
     Return structured findings only. Use:
     - unsupported_interpretation for overconfident or unsupported physics claims.
@@ -342,12 +505,27 @@ enum PhysicsReviewerAgent {
 
     private static func normalizedFindings(
         _ rawFindings: [RawFinding],
-        qualityFindings: [RunQualityFinding]
+        input: PhysicsReviewerInput
     ) -> [PhysicsReviewerFinding] {
-        var findings: [PhysicsReviewerFinding] = []
+        normalizedFindings(
+            rawFindings,
+            qualityFindings: input.qualityFindings,
+            validReferenceIds: validReferenceIds(input),
+            deterministicFindings: deterministicReferenceFindings(input: input)
+        )
+    }
+
+    private static func normalizedFindings(
+        _ rawFindings: [RawFinding],
+        qualityFindings: [RunQualityFinding],
+        validReferenceIds: Set<String>,
+        deterministicFindings: [PhysicsReviewerFinding] = []
+    ) -> [PhysicsReviewerFinding] {
+        var findings = deterministicFindings
         for raw in rawFindings {
             let message = raw.message.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !message.isEmpty else { continue }
+            let referenceIds = sanitizedReferenceIds(raw.referenceIds, validReferenceIds: validReferenceIds)
             findings.append(
                 PhysicsReviewerFinding(
                     id: "reviewer-\(findings.count + 1)-\(raw.category.rawValue)",
@@ -357,7 +535,8 @@ enum PhysicsReviewerAgent {
                     evidenceReferences: raw.evidenceReferences
                         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                         .filter { !$0.isEmpty }
-                        .map { String($0.prefix(160)) }
+                        .map { String($0.prefix(160)) },
+                    referenceIds: referenceIds
                 )
             )
         }
@@ -389,14 +568,7 @@ enum PhysicsReviewerAgent {
             )
         }
 
-        return findings.sorted { lhs, rhs in
-            let lhsRank = severityRank(lhs.severity)
-            let rhsRank = severityRank(rhs.severity)
-            if lhsRank != rhsRank {
-                return lhsRank < rhsRank
-            }
-            return lhs.id < rhs.id
-        }
+        return sortedFindings(dedupedFindings(findings))
     }
 
     private static func referencesQuality(
@@ -407,6 +579,211 @@ enum PhysicsReviewerAgent {
             finding.evidenceReferences.contains { reference in
                 reference.range(of: findingId, options: .caseInsensitive) != nil
             }
+        }
+    }
+
+    private static func deterministicReferenceFindings(input: PhysicsReviewerInput) -> [PhysicsReviewerFinding] {
+        var findings: [PhysicsReviewerFinding] = []
+        let summary = input.finalSummaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowerSummary = summary.lowercased()
+        let pack = input.referencePack
+
+        if input.run.status == "completed", pack == nil {
+            findings.append(
+                PhysicsReviewerFinding(
+                    id: "reviewer-missing-reference-pack",
+                    severity: .warning,
+                    category: .citationGap,
+                    message: "This completed run has no persisted reference_pack.json, so external-literature or measurement claims cannot be citation-grounded by the reviewer.",
+                    evidenceReferences: ["reference_pack.json missing"]
+                )
+            )
+        }
+
+        for status in pack?.sourceStatuses ?? [] where status.state == HEPReferenceRetrievalState.failed.rawValue || status.state == HEPReferenceRetrievalState.partialFailure.rawValue {
+            var evidence = ["reference_pack.source_statuses.\(status.source)=\(status.state)"]
+            if let message = status.message, !message.isEmpty {
+                evidence.append(message)
+            }
+            findings.append(
+                PhysicsReviewerFinding(
+                    id: "reviewer-reference-source-\(status.source)-\(status.state)",
+                    severity: .warning,
+                    category: .citationGap,
+                    message: "\(status.source) reference refresh status is \(status.state), so reviewer coverage for source-backed claims is incomplete.",
+                    evidenceReferences: evidence
+                )
+            )
+        }
+
+        guard !summary.isEmpty else {
+            return findings
+        }
+
+        let sensitiveNeedles = [
+            "external measurement",
+            "external measurements",
+            "measurement",
+            "measurements",
+            "literature",
+            "published result",
+            "published results",
+            "citation",
+            "citations",
+            "pdg",
+            "hepdata",
+            "arxiv",
+            "inspire",
+            "experiment",
+            "experimental data"
+        ]
+        let mentionsCitationSensitiveClaim = sensitiveNeedles.contains { lowerSummary.contains($0) }
+        if mentionsCitationSensitiveClaim && (pack?.references.isEmpty ?? true) {
+            findings.append(
+                PhysicsReviewerFinding(
+                    id: "reviewer-external-claim-without-reference",
+                    severity: .warning,
+                    category: .citationGap,
+                    message: "The final summary mentions external measurements, literature, citations, PDG, HEPData, arXiv, INSPIRE, experiments, or published results, but no persisted reference supports that claim.",
+                    evidenceReferences: ["final_summary_text", "reference_pack.references empty"]
+                )
+            )
+        }
+
+        for gap in sourceSpecificCitationGaps(lowerSummary: lowerSummary, pack: pack) {
+            findings.append(gap)
+        }
+
+        let overclaimNeedles = [
+            "agrees with",
+            "consistent with",
+            "matches",
+            "validated against",
+            "confirms",
+            "reproduces",
+            "in agreement with"
+        ]
+        let hasOverclaim = overclaimNeedles.contains { lowerSummary.contains($0) }
+        if hasOverclaim && !mentionsLocalOnlyQualifier(lowerSummary) {
+            let hasReferences = !(pack?.references.isEmpty ?? true)
+            let hasSourceSuccess = pack?.sourceStatuses.contains { $0.state == HEPReferenceRetrievalState.success.rawValue && $0.resultCount > 0 } ?? false
+            if !hasReferences || !hasSourceSuccess {
+                findings.append(
+                    PhysicsReviewerFinding(
+                        id: "reviewer-citation-sensitive-overclaim",
+                        severity: .warning,
+                        category: .unsupportedInterpretation,
+                        message: "The final summary uses agreement/validation language that requires citation-backed external evidence; local simulation artifacts alone do not support that claim.",
+                        evidenceReferences: ["final_summary_text", "local run artifacts only"]
+                    )
+                )
+            }
+        }
+
+        return findings
+    }
+
+    private static func sourceSpecificCitationGaps(
+        lowerSummary: String,
+        pack: PhysicsReviewerReferencePackSnapshot?
+    ) -> [PhysicsReviewerFinding] {
+        let sourceChecks: [(needle: String, source: String, label: String)] = [
+            ("pdg", "pdg", "PDG"),
+            ("hepdata", "hepdata", "HEPData"),
+            ("arxiv", "arxiv", "arXiv"),
+            ("inspire", "inspire", "INSPIRE")
+        ]
+        var findings: [PhysicsReviewerFinding] = []
+        for check in sourceChecks where lowerSummary.contains(check.needle) && !hasReferenceSource(check.source, pack: pack) {
+            findings.append(
+                PhysicsReviewerFinding(
+                    id: "reviewer-missing-\(check.source)-reference",
+                    severity: .warning,
+                    category: .citationGap,
+                    message: "The final summary mentions \(check.label), but the persisted reference pack does not include a \(check.label) reference.",
+                    evidenceReferences: ["final_summary_text", "reference_pack.references"]
+                )
+            )
+        }
+
+        let measurementNeedles = ["external measurement", "external measurements", "measurements", "published result", "published results", "experimental data"]
+        let mentionsMeasurementClaim = measurementNeedles.contains { lowerSummary.contains($0) }
+        if mentionsMeasurementClaim && !hasMeasurementReference(pack) {
+            findings.append(
+                PhysicsReviewerFinding(
+                    id: "reviewer-missing-measurement-reference",
+                    severity: .warning,
+                    category: .citationGap,
+                    message: "The final summary mentions external measurements or published results, but the persisted reference pack does not include a measurement/data reference.",
+                    evidenceReferences: ["final_summary_text", "reference_pack.references"]
+                )
+            )
+        }
+        return findings
+    }
+
+    private static func hasReferenceSource(
+        _ source: String,
+        pack: PhysicsReviewerReferencePackSnapshot?
+    ) -> Bool {
+        pack?.references.contains { reference in
+            reference.sources.contains(source)
+        } ?? false
+    }
+
+    private static func hasMeasurementReference(_ pack: PhysicsReviewerReferencePackSnapshot?) -> Bool {
+        pack?.references.contains { reference in
+            reference.sources.contains("hepdata")
+                || reference.tags.contains { tag in
+                    let lower = tag.lowercased()
+                    return lower.contains("measurement") || lower.contains("data")
+                }
+        } ?? false
+    }
+
+    private static func mentionsLocalOnlyQualifier(_ lowerSummary: String) -> Bool {
+        lowerSummary.contains("within this simulation")
+            || lowerSummary.contains("within the generated sample")
+            || lowerSummary.contains("in this run")
+            || lowerSummary.contains("local simulation")
+    }
+
+    private static func validReferenceIds(_ input: PhysicsReviewerInput) -> Set<String> {
+        Set(input.referencePack?.references.map(\.id) ?? [])
+    }
+
+    private static func sanitizedReferenceIds(
+        _ ids: [String],
+        validReferenceIds: Set<String>
+    ) -> [String] {
+        var seen = Set<String>()
+        return ids.compactMap { raw in
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, validReferenceIds.contains(id), !seen.contains(id) else {
+                return nil
+            }
+            seen.insert(id)
+            return id
+        }
+    }
+
+    private static func dedupedFindings(_ findings: [PhysicsReviewerFinding]) -> [PhysicsReviewerFinding] {
+        var seen = Set<String>()
+        return findings.filter { finding in
+            guard !seen.contains(finding.id) else { return false }
+            seen.insert(finding.id)
+            return true
+        }
+    }
+
+    private static func sortedFindings(_ findings: [PhysicsReviewerFinding]) -> [PhysicsReviewerFinding] {
+        findings.sorted { lhs, rhs in
+            let lhsRank = severityRank(lhs.severity)
+            let rhsRank = severityRank(rhs.severity)
+            if lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
+            return lhs.id < rhs.id
         }
     }
 

@@ -2966,6 +2966,27 @@ private struct PhysicsReviewerFindingRow: View {
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
+                if !finding.referenceIds.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(finding.referenceIds.prefix(4), id: \.self) { referenceId in
+                            Text(referenceId)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.blue)
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.blue.opacity(0.08))
+                                )
+                        }
+                        if finding.referenceIds.count > 4 {
+                            Text("+\(finding.referenceIds.count - 4)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -3345,6 +3366,7 @@ private enum PhysicsReviewerAdapter {
             chartPayloads: chartPayloads,
             messages: messageSnapshots,
             qualityFindings: qualityFindings,
+            referencePack: HEPReferencePackAdapter.pack(in: artifacts),
             finalSummaryText: finalSummary
         )
         return PhysicsReviewerAgent.fallbackFindings(
@@ -3743,14 +3765,15 @@ private enum RunBundleExporter {
             copiedArtifacts: copiedArtifacts,
             summaryMetrics: summaryMetrics
         )
+        let referencePack = referencePack(in: bundleURL, copiedArtifacts: copiedArtifacts)
         let reviewerFindings = reviewerFindings(
             run: run,
             bundleURL: bundleURL,
             copiedArtifacts: copiedArtifacts,
             summaryMetrics: summaryMetrics,
-            qualityFindings: qualityFindings
+            qualityFindings: qualityFindings,
+            referencePack: referencePack
         )
-        let referencePack = referencePack(in: bundleURL, copiedArtifacts: copiedArtifacts)
         let chartSummaries = chartPayloads.map { chart in
             ChartSummary(
                 title: chart.title,
@@ -3955,7 +3978,8 @@ private enum RunBundleExporter {
         bundleURL: URL,
         copiedArtifacts: [BundleArtifact],
         summaryMetrics: [String: String],
-        qualityFindings: [RunQualityFinding]
+        qualityFindings: [RunQualityFinding],
+        referencePack: HEPReferencePack?
     ) -> [PhysicsReviewerFinding] {
         if let envelope = decodePhysicsReviewerEnvelope(from: bundleURL.appendingPathComponent("physics_reviewer.json")) {
             return envelope.findings
@@ -3990,6 +4014,7 @@ private enum RunBundleExporter {
             chartPayloads: [],
             messages: [],
             qualityFindings: qualityFindings,
+            referencePack: referencePack,
             finalSummaryText: run.resultSummary ?? ""
         )
         return PhysicsReviewerAgent.fallbackFindings(
@@ -4122,6 +4147,9 @@ private enum RunBundleExporter {
                 lines.append("- `\(finding.severity.rawValue)`: \(finding.category.rawValue) - \(finding.message)")
                 if !finding.evidenceReferences.isEmpty {
                     lines.append("  - Evidence: \(finding.evidenceReferences.joined(separator: "; "))")
+                }
+                if !finding.referenceIds.isEmpty {
+                    lines.append("  - References: \(finding.referenceIds.joined(separator: ", "))")
                 }
             }
         }

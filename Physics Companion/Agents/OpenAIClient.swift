@@ -351,9 +351,13 @@ enum OpenAIResponseFormats {
                         "evidence_references": [
                             "type": "array",
                             "items": ["type": "string"]
+                        ],
+                        "reference_ids": [
+                            "type": "array",
+                            "items": ["type": "string"]
                         ]
                     ],
-                    "required": ["severity", "category", "message", "evidence_references"]
+                    "required": ["severity", "category", "message", "evidence_references", "reference_ids"]
                 ]
             ]
         ],

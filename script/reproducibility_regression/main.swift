@@ -297,6 +297,7 @@ private func testPhysicsReviewerInputConstruction() throws {
         chartPayloads: [chart],
         messages: messages,
         qualityFindings: qualityFindings,
+        referencePack: reviewerReferencePack(),
         finalSummaryText: ""
     )
 
@@ -304,6 +305,9 @@ private func testPhysicsReviewerInputConstruction() throws {
     try expectEqual(input.chartSummaries.first?.pointCount, 2, "reviewer input summarizes chart points")
     try expectEqual(input.chartSummaries.first?.metricSummaries.first, "mean_pt=1.8 GeV", "reviewer input summarizes metrics")
     try expect(input.logSnippets.contains(where: { $0.name == "compile.log" }), "reviewer input keeps warning log snippets")
+    try expectEqual(input.referencePack?.references.count, 2, "reviewer input includes reference pack references")
+    try expectEqual(input.referencePack?.references.first?.id, reviewerReferencePack().references.first?.id, "reviewer input preserves stable reference ids")
+    try expectEqual(input.referencePack?.sourceStatuses.first?.state, "partial_failure", "reviewer input includes source statuses")
 
     let derivedSummary = PhysicsReviewerEvidenceBuilder.finalSummaryText(explicit: nil, messages: messages)
     try expectContains(derivedSummary, "200 generated events", "reviewer final summary fallback uses result message")
@@ -311,10 +315,22 @@ private func testPhysicsReviewerInputConstruction() throws {
     let payload = PhysicsReviewerEvidenceBuilder.promptPayload(input)
     try expectContains(payload, "\"quality_findings\"", "reviewer prompt payload includes quality findings")
     try expectContains(payload, "\"final_summary_text\"", "reviewer prompt payload includes final summary text")
+    try expectContains(payload, "\"reference_pack\"", "reviewer prompt payload includes reference pack")
+    try expectContains(payload, "\"source_statuses\"", "reviewer prompt payload includes source statuses")
+    try expectContains(payload, "\"doi\"", "reviewer prompt payload includes reference identifiers")
 }
 
 private func testPhysicsReviewerResponseParsing() throws {
     let qualityFindings = RunQualityAnalyzer.analyze(qualityInput(eventCount: 200, summaryEvents: 200))
+    let parseInput = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: qualityInput(eventCount: 200, summaryEvents: 200),
+        chartPayloads: [],
+        messages: [],
+        qualityFindings: qualityFindings,
+        referencePack: reviewerReferencePack(),
+        finalSummaryText: "The result is consistent with published measurements."
+    )
+    let validReferenceId = reviewerReferencePack().references.first?.id ?? ""
     let parsed = PhysicsReviewerAgent.parseResponseJSON(
         """
         {
@@ -323,12 +339,14 @@ private func testPhysicsReviewerResponseParsing() throws {
               "severity": "info",
               "category": "unsupported_interpretation",
               "message": "The final summary stays within the supplied evidence.",
-              "evidence_references": ["summary.json"]
+              "evidence_references": ["summary.json"],
+              "reference_ids": ["\(validReferenceId)", "invented-reference"]
             }
           ]
         }
         """,
-        qualityFindings: qualityFindings
+        qualityFindings: qualityFindings,
+        input: parseInput
     )
 
     guard let parsed else {
@@ -336,6 +354,7 @@ private func testPhysicsReviewerResponseParsing() throws {
     }
 
     try expect(parsed.contains(where: { $0.category == .unsupportedInterpretation }), "parsed reviewer response keeps model finding")
+    try expect(parsed.contains(where: { $0.referenceIds == [validReferenceId] }), "parser keeps only reference ids present in the supplied pack")
     try expectReviewerFinding(
         parsed,
         id: "reviewer-quality-low-event-count",
@@ -358,6 +377,7 @@ private func testPhysicsReviewerFallback() throws {
         chartPayloads: [],
         messages: [],
         qualityFindings: qualityFindings,
+        referencePack: nil,
         finalSummaryText: "This is a clean high-statistics run."
     )
 
@@ -382,6 +402,7 @@ private func testPhysicsReviewerFallback() throws {
         chartPayloads: [],
         messages: [],
         qualityFindings: RunQualityAnalyzer.analyze(cleanQuality),
+        referencePack: reviewerReferencePack(includeStatusWarning: false),
         finalSummaryText: "The run completed."
     )
     let cleanFallback = PhysicsReviewerAgent.fallbackFindings(
@@ -399,6 +420,102 @@ private func testPhysicsReviewerFallback() throws {
         "not model-reviewed",
         "clean fallback avoids overclaiming review"
     )
+}
+
+private func testPhysicsReviewerReferenceFallbacksAndSerialization() throws {
+    let cleanQuality = qualityInput()
+    let missingPackInput = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: cleanQuality,
+        chartPayloads: [],
+        messages: [],
+        qualityFindings: [],
+        referencePack: nil,
+        finalSummaryText: "The pT spectrum agrees with published measurements."
+    )
+    let missingPackFindings = PhysicsReviewerAgent.fallbackFindings(
+        input: missingPackInput,
+        reason: "fixture unavailable"
+    )
+    try expectReviewerFinding(
+        missingPackFindings,
+        id: "reviewer-missing-reference-pack",
+        severity: .warning,
+        "fallback warns on missing completed-run reference pack"
+    )
+    try expectReviewerFinding(
+        missingPackFindings,
+        id: "reviewer-external-claim-without-reference",
+        severity: .warning,
+        "fallback warns on external claim without references"
+    )
+    try expectReviewerFinding(
+        missingPackFindings,
+        id: "reviewer-citation-sensitive-overclaim",
+        severity: .warning,
+        "fallback warns on citation-sensitive overclaim"
+    )
+
+    let partialPackInput = PhysicsReviewerEvidenceBuilder.buildInput(
+        qualityInput: cleanQuality,
+        chartPayloads: [],
+        messages: [],
+        qualityFindings: [],
+        referencePack: reviewerReferencePack(),
+        finalSummaryText: "The result should be compared to HEPData published results."
+    )
+    let partialPackFindings = PhysicsReviewerAgent.fallbackFindings(
+        input: partialPackInput,
+        reason: "fixture unavailable"
+    )
+    try expectReviewerFinding(
+        partialPackFindings,
+        id: "reviewer-reference-source-hepdata-partial_failure",
+        severity: .warning,
+        "fallback warns on partial source refresh status"
+    )
+
+    let oldArtifactJSON = """
+    {
+      "format_version": 1,
+      "generated_at": "2026-07-08T00:00:00Z",
+      "run_id": "quality-fixture",
+      "source": "fixture",
+      "findings": [
+        {
+          "id": "old-finding",
+          "severity": "warning",
+          "category": "citation_gap",
+          "message": "Old artifact without reference_ids.",
+          "evidence_references": ["summary.json"]
+        }
+      ]
+    }
+    """
+    let oldEnvelope = try JSONDecoder().decode(PhysicsReviewerEnvelope.self, from: Data(oldArtifactJSON.utf8))
+    try expectEqual(oldEnvelope.findings.first?.referenceIds ?? ["unexpected"], [], "old reviewer artifacts decode with empty reference ids")
+
+    struct ExportFixture: Codable {
+        let reviewerFindings: [PhysicsReviewerFinding]
+
+        enum CodingKeys: String, CodingKey {
+            case reviewerFindings = "reviewer_findings"
+        }
+    }
+
+    let referenceId = reviewerReferencePack().references.first?.id ?? ""
+    let data = try JSONEncoder().encode(ExportFixture(reviewerFindings: [
+        PhysicsReviewerFinding(
+            id: "reviewer-reference-backed",
+            severity: .info,
+            category: .unsupportedInterpretation,
+            message: "Reference-backed fixture finding.",
+            evidenceReferences: ["summary.json"],
+            referenceIds: [referenceId]
+        )
+    ]))
+    let json = String(data: data, encoding: .utf8) ?? ""
+    try expectContains(json, "\"reference_ids\"", "export serialization preserves reviewer reference ids")
+    try expectContains(json, referenceId, "export serialization includes supplied reference id")
 }
 
 private func testHEPReferenceParsingAndNormalization() throws {
@@ -674,6 +791,55 @@ private func referenceRefreshFixtureFetcher(source: HEPReferenceSource, url: URL
     }
 }
 
+private func reviewerReferencePack(includeStatusWarning: Bool = true) -> HEPReferencePack {
+    HEPReferencePackAssembler.assemble(
+        query: "pythia charged particle pT measurements",
+        references: [
+            HEPReference(
+                source: .arxiv,
+                title: "An Introduction to PYTHIA 8.2",
+                authors: ["Torbjorn Sjostrand"],
+                year: 2015,
+                snippet: "Generator reference for Pythia setup.",
+                doi: "10.1016/j.cpc.2015.01.024",
+                arxivId: "1410.3012",
+                inspireId: "1321709",
+                url: "https://arxiv.org/abs/1410.3012",
+                tags: ["pythia", "generator"]
+            ),
+            HEPReference(
+                source: .hepdata,
+                title: "Fixture charged-particle pT measurement",
+                year: 2021,
+                snippet: "Fixture published measurement context.",
+                hepDataId: "ins1860766",
+                url: "https://www.hepdata.net/record/ins1860766",
+                tags: ["hepdata", "measurements"]
+            )
+        ],
+        generatedAt: "2026-07-08T00:00:00Z",
+        additionalTags: ["pt_spectrum"],
+        sourceStatuses: includeStatusWarning ? [
+            HEPReferenceSourceStatus(
+                source: .hepdata,
+                state: .partialFailure,
+                query: "ins1860766",
+                resultCount: 1,
+                message: "fixture partial source coverage",
+                updatedAt: "2026-07-08T00:00:00Z"
+            )
+        ] : [
+            HEPReferenceSourceStatus(
+                source: .hepdata,
+                state: .success,
+                query: "ins1860766",
+                resultCount: 1,
+                updatedAt: "2026-07-08T00:00:00Z"
+            )
+        ]
+    )
+}
+
 private func waitFor<T>(_ operation: @escaping () async -> T) -> T {
     let semaphore = DispatchSemaphore(value: 0)
     let box = AsyncBox<T>()
@@ -786,6 +952,7 @@ let tests: [(String, () throws -> Void)] = [
     ("PhysicsReviewerEvidenceBuilder", testPhysicsReviewerInputConstruction),
     ("PhysicsReviewerAgent.parseResponseJSON", testPhysicsReviewerResponseParsing),
     ("PhysicsReviewerAgent.fallbackFindings", testPhysicsReviewerFallback),
+    ("PhysicsReviewerAgent reference fallbacks and serialization", testPhysicsReviewerReferenceFallbacksAndSerialization),
     ("HEPReference parsing and normalization", testHEPReferenceParsingAndNormalization),
     ("HEPReferencePack dedupe and serialization", testHEPReferencePackDedupeAndSerialization),
     ("HEPReferenceRetriever query construction", testHEPReferenceQueryConstruction),
