@@ -78,6 +78,7 @@ enum MessageSender: String, Codable, Sendable {
     case guide    = "guide"
     case result   = "result"
     case plotting = "plotting"
+    case reviewer = "reviewer"
 }
 
 struct ChatMessage: Codable, Sendable, Identifiable {

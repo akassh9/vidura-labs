@@ -333,6 +333,21 @@ final class OrchestratorService: ObservableObject {
                         step: physicsSummary == nil ? "no_output" : "completed"
                     )
 
+                    currentPhase = "physics_review"
+                    ctx.emitEvent(phase: "physics_review", step: "started")
+                    let reviewerMessages = try await store.fetchRunMessagesAndParents(forRun: ctx.runId)
+                    let reviewerFindings = await runPhysicsReviewerStage(
+                        ctx: ctx,
+                        runMessages: reviewerMessages,
+                        chartPayloads: plottingOutput.chartPayloads,
+                        finalSummaryText: physicsSummary ?? summary,
+                        lastMsgId: plottingOutput.lastChartMessageId ?? lastMsgId
+                    )
+                    ctx.emitEvent(
+                        phase: "physics_review",
+                        step: reviewerFindings.isEmpty ? "no_output" : "completed"
+                    )
+
                     finalResult = physicsSummary ?? summary
                     break
                 } else {
@@ -476,6 +491,21 @@ final class OrchestratorService: ObservableObject {
             ctx.emitEvent(
                 phase: "physics_summary",
                 step: physicsSummary == nil ? "no_output" : "completed"
+            )
+
+            currentPhase = "physics_review"
+            ctx.emitEvent(phase: "physics_review", step: "started")
+            let reviewerMessages = try await store.fetchRunMessagesAndParents(forRun: rerun.id)
+            let reviewerFindings = await runPhysicsReviewerStage(
+                ctx: ctx,
+                runMessages: reviewerMessages,
+                chartPayloads: plottingOutput.chartPayloads,
+                finalSummaryText: physicsSummary ?? summary,
+                lastMsgId: plottingOutput.lastChartMessageId ?? summaryMessageId
+            )
+            ctx.emitEvent(
+                phase: "physics_review",
+                step: reviewerFindings.isEmpty ? "no_output" : "completed"
             )
 
             try await store.loadRuns(forThread: sourceRun.threadId)
@@ -631,6 +661,21 @@ final class OrchestratorService: ObservableObject {
             ctx.emitEvent(
                 phase: "physics_summary",
                 step: physicsSummary == nil ? "no_output" : "completed"
+            )
+
+            currentPhase = "physics_review"
+            ctx.emitEvent(phase: "physics_review", step: "started")
+            let reviewerMessages = try await store.fetchRunMessagesAndParents(forRun: variant.id)
+            let reviewerFindings = await runPhysicsReviewerStage(
+                ctx: ctx,
+                runMessages: reviewerMessages,
+                chartPayloads: plottingOutput.chartPayloads,
+                finalSummaryText: physicsSummary ?? summary,
+                lastMsgId: plottingOutput.lastChartMessageId ?? summaryMessageId
+            )
+            ctx.emitEvent(
+                phase: "physics_review",
+                step: reviewerFindings.isEmpty ? "no_output" : "completed"
             )
 
             try await store.loadRuns(forThread: sourceRun.threadId)
@@ -1212,6 +1257,52 @@ final class OrchestratorService: ObservableObject {
         return summaryText
     }
 
+    // MARK: - Stage 10: Physics Reviewer
+
+    private func runPhysicsReviewerStage(
+        ctx: OrchestratorRunContext,
+        runMessages: [ChatMessage],
+        chartPayloads: [ChartPayload],
+        finalSummaryText: String,
+        lastMsgId: String
+    ) async -> [PhysicsReviewerFinding] {
+        do {
+            let run = try await store.fetchRun(id: ctx.runId)
+            let qualityInput = reviewerQualityInput(for: run)
+            let qualityFindings = RunQualityAnalyzer.analyze(qualityInput)
+            let messageSnapshots = runMessages.map(reviewerMessageSnapshot)
+            let reviewerInput = PhysicsReviewerEvidenceBuilder.buildInput(
+                qualityInput: qualityInput,
+                chartPayloads: chartPayloads,
+                messages: messageSnapshots,
+                qualityFindings: qualityFindings,
+                finalSummaryText: finalSummaryText
+            )
+            let findings = await PhysicsReviewerAgent.run(
+                modelName: modelName,
+                settingsApiKey: ctx.settingsStore.data.apiKey,
+                input: reviewerInput
+            )
+            try await persistPhysicsReviewerEvidence(ctx: ctx, findings: findings)
+            try await store.addChatMessage(
+                runId: ctx.runId,
+                message: ChatMessage(
+                    id: UUID().uuidString,
+                    role: "assistant",
+                    content: PhysicsReviewerAgent.compactText(findings: findings),
+                    timestamp: ISO8601DateFormatter().string(from: Date()),
+                    originRunId: ctx.runId,
+                    parentMessageId: lastMsgId,
+                    sender: .reviewer
+                )
+            )
+            return findings
+        } catch {
+            aiLogger.error("[PhysicsReviewerStage] Error: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
     // MARK: - Finalization
 
     private func finalizeGuideOnly(
@@ -1319,6 +1410,151 @@ final class OrchestratorService: ObservableObject {
         for path in attempt.plotPaths {
             try await appendArtifact(path: path, kind: "data")
         }
+    }
+
+    private func persistPhysicsReviewerEvidence(
+        ctx: OrchestratorRunContext,
+        findings: [PhysicsReviewerFinding]
+    ) async throws {
+        guard let attempt = ctx.lastAttempt else { return }
+        let attemptDir = !attempt.generatedCodePath.isEmpty
+            ? URL(fileURLWithPath: attempt.generatedCodePath).deletingLastPathComponent()
+            : PathUtils.simulationsDir
+                .appendingPathComponent(ctx.runId)
+                .appendingPathComponent("attempt_\(ctx.attemptNumber)")
+        try FileManager.default.createDirectory(at: attemptDir, withIntermediateDirectories: true)
+
+        let envelope = PhysicsReviewerAgent.envelope(
+            runId: ctx.runId,
+            source: "openai_structured_or_deterministic_fallback",
+            findings: findings
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(envelope)
+        let url = attemptDir.appendingPathComponent("physics_reviewer.json")
+        try data.write(to: url, options: .atomic)
+
+        let run = try await store.fetchRun(id: ctx.runId)
+        guard !run.artifacts.contains(where: { $0.relativePath == url.path }) else {
+            return
+        }
+        let artifact = ArtifactRef(
+            id: UUID().uuidString,
+            kind: "review",
+            label: "physics_reviewer.json",
+            relativePath: url.path,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        try await store.addArtifact(runId: ctx.runId, artifact: artifact)
+    }
+
+    private func reviewerQualityInput(for run: SimulationRun) -> RunQualityInput {
+        let artifacts = run.artifacts
+        return RunQualityInput(
+            run: RunQualityRunSnapshot(
+                id: run.id,
+                title: run.title,
+                status: run.status.rawValue,
+                eventCount: run.eventCount,
+                configuration: run.configuration
+            ),
+            spec: reviewerSimulationSpec(in: artifacts).map(reviewerSpecSnapshot),
+            summaryMetrics: reviewerSummaryMetrics(in: artifacts),
+            artifacts: artifacts.map(reviewerArtifactSnapshot),
+            compileLog: reviewerTextArtifact(named: "compile.log", in: artifacts),
+            runLog: reviewerTextArtifact(named: "run.log", in: artifacts)
+        )
+    }
+
+    private func reviewerSpecSnapshot(_ spec: SimulationSpec) -> RunQualitySpecSnapshot {
+        RunQualitySpecSnapshot(
+            eventCount: spec.eventCount,
+            analysisFamily: spec.analysisPlan?.family,
+            outputFiles: spec.outputPlan.extraFiles,
+            processSettings: spec.processSettings,
+            cutsSettings: spec.cutsSettings
+        )
+    }
+
+    private func reviewerArtifactSnapshot(_ artifact: ArtifactRef) -> RunQualityArtifactSnapshot {
+        RunQualityArtifactSnapshot(
+            label: artifact.label,
+            kind: artifact.kind,
+            path: artifact.relativePath,
+            byteSize: reviewerFileSize(for: URL(fileURLWithPath: artifact.relativePath))
+        )
+    }
+
+    private func reviewerMessageSnapshot(_ message: ChatMessage) -> PhysicsReviewerMessageSnapshot {
+        PhysicsReviewerMessageSnapshot(
+            role: message.role,
+            sender: message.sender.rawValue,
+            content: message.content,
+            timestamp: message.timestamp
+        )
+    }
+
+    private func reviewerSummaryMetrics(in artifacts: [ArtifactRef]) -> [String: String] {
+        guard let url = reviewerArtifactURL(named: "summary.json", in: artifacts),
+              let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return [:]
+        }
+        return reviewerFlattenJSONValues(object)
+    }
+
+    private func reviewerSimulationSpec(in artifacts: [ArtifactRef]) -> SimulationSpec? {
+        guard let url = reviewerArtifactURL(named: "simulation_spec.json", in: artifacts),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SimulationSpec.self, from: data)
+    }
+
+    private func reviewerTextArtifact(named fileName: String, in artifacts: [ArtifactRef]) -> String? {
+        guard let url = reviewerArtifactURL(named: fileName, in: artifacts) else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func reviewerArtifactURL(named fileName: String, in artifacts: [ArtifactRef]) -> URL? {
+        artifacts.first { artifact in
+            URL(fileURLWithPath: artifact.relativePath).lastPathComponent == fileName
+                && FileManager.default.fileExists(atPath: artifact.relativePath)
+        }
+        .map { URL(fileURLWithPath: $0.relativePath) }
+    }
+
+    private func reviewerFileSize(for url: URL) -> UInt64? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return size.uint64Value
+    }
+
+    private func reviewerFlattenJSONValues(_ value: Any, prefix: String = "") -> [String: String] {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [:]) { result, pair in
+                let key = prefix.isEmpty ? pair.key : "\(prefix).\(pair.key)"
+                result.merge(reviewerFlattenJSONValues(pair.value, prefix: key), uniquingKeysWith: { _, new in new })
+            }
+        }
+        if let array = value as? [Any] {
+            return [prefix: "\(array.count) items"]
+        }
+        if let number = value as? NSNumber {
+            return [prefix: number.stringValue]
+        }
+        if let string = value as? String {
+            return [prefix: string]
+        }
+        if value is NSNull {
+            return [prefix: "null"]
+        }
+        return [prefix: String(describing: value)]
     }
 
     private func evidencePath(for run: SimulationRun, named fileName: String) throws -> String {

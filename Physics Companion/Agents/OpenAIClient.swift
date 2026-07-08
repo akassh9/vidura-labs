@@ -321,6 +321,45 @@ enum OpenAIResponseFormats {
         required: ["source_code"]
     )
 
+    static let physicsReviewer: [String: Any] = jsonSchema(
+        name: "physics_reviewer",
+        properties: [
+            "findings": [
+                "type": "array",
+                "items": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": [
+                        "severity": [
+                            "type": "string",
+                            "enum": ["info", "warning", "error"]
+                        ],
+                        "category": [
+                            "type": "string",
+                            "enum": [
+                                "unsupported_interpretation",
+                                "evidence_conflict",
+                                "citation_gap",
+                                "unit_ambiguity",
+                                "ignored_quality_finding",
+                                "cut_process_wording",
+                                "artifact_gap",
+                                "reviewer_unavailable"
+                            ]
+                        ],
+                        "message": ["type": "string"],
+                        "evidence_references": [
+                            "type": "array",
+                            "items": ["type": "string"]
+                        ]
+                    ],
+                    "required": ["severity", "category", "message", "evidence_references"]
+                ]
+            ]
+        ],
+        required: ["findings"]
+    )
+
     private static func jsonSchema(
         name: String,
         properties: [String: Any],

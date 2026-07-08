@@ -15,6 +15,9 @@ xcrun swiftc \
   "${REPO_ROOT}/Physics Companion/Pathutils.swift" \
   "${REPO_ROOT}/Physics Companion/Agents/AgentTypes.swift" \
   "${REPO_ROOT}/Physics Companion/Agents/CodegenAgent.swift" \
+  "${REPO_ROOT}/Physics Companion/Agents/ChartModels.swift" \
+  "${REPO_ROOT}/Physics Companion/Agents/OpenAIClient.swift" \
+  "${REPO_ROOT}/Physics Companion/Agents/PhysicsReviewerAgent.swift" \
   "${REPO_ROOT}/Physics Companion/Agents/RunnerSummaryParser.swift" \
   "${REPO_ROOT}/Physics Companion/Agents/RunnerService.swift" \
   "${REPO_ROOT}/Physics Companion/RunLineageResolver.swift" \
