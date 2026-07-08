@@ -162,11 +162,15 @@ Completed:
   deterministic query construction, bounded arXiv/INSPIRE/HEPData/PDG retrieval,
   per-source statuses, persisted refreshed `reference_pack.json`, compact Run
   Evidence status chips, and fixture-backed regression coverage.
+- Reference-Grounded Physics Reviewer v2 with persisted reference-pack input,
+  sanitized `reference_ids`, deterministic citation-gap fallbacks, compact
+  reference ID chips in reviewer findings, and export preservation of reviewer
+  reference IDs.
 
 This is a strong Phase 0/1 foundation. It is still far from the workbench
-benchmark because it lacks reference-grounded reviewer behavior, managed
-compute, native physics artifact viewers, richer review workflows, and
-publication workflows.
+benchmark because users cannot yet inspect and edit planned physics assumptions
+before execution, and it still lacks managed compute, native physics artifact
+viewers, richer review workflows, and publication workflows.
 
 ## Execution Principles
 
@@ -243,17 +247,26 @@ Completed:
 - reviewer findings in Run Evidence and exports;
 - structured reviewer output that downstream agents must respect;
 - regression coverage for reviewer input shaping, parsing, and fallback paths.
+- reviewer checks that consume persisted HEP reference packs and distinguish
+  artifact-backed, citation-backed, and unsupported claims;
+- sanitized reviewer `reference_ids` that can only point to references present
+  in the persisted pack;
+- deterministic fallback warnings for missing reference packs, failed/partial
+  source coverage, citation-sensitive overclaims, and external-measurement
+  claims without support;
+- reviewer reference IDs in Run Evidence, `physics_reviewer.json`, exported
+  `manifest.json`, and `run_report.md`.
 
 Needed:
 
-- fresh smoke runs that exercise persisted reviewer artifacts end to end;
-- reviewer checks that consume persisted HEP reference packs and distinguish
-  artifact-backed, citation-backed, and unsupported claims.
+- fresh smoke runs that exercise persisted reference-grounded reviewer artifacts
+  end to end;
+- reviewer checks that compare generated distributions to actual public data
+  once HEPData comparison is available.
 
-The next trust gap is no longer source collection. It is using those sources:
-the reviewer must stop treating references as decoration and start checking
-whether the final interpretation is grounded in the run artifacts and the
-persisted HEP references.
+The next trust gap is now upstream of execution. Vidura can review completed
+runs, but users still need to inspect and edit the generated physics plan before
+spending time on a simulation.
 
 ### Phase 3: Become Domain-Ready For HEP
 
@@ -281,10 +294,11 @@ Completed:
 - compact Run Evidence status chips for refreshed source counts and failures;
 - fixture regression coverage for query construction, merge behavior, partial
   failures, and status serialization.
+- reviewer/summary stages that consume real reference packs for citation-aware
+  findings without calling live source APIs during review or export.
 
 Needed:
 
-- reviewer/summary stages that can consume real reference packs;
 - connectors for CERN Open Data, LHAPDF, and relevant experiment public
   repositories;
 - analysis templates for common Pythia/Rivet/ROOT tasks;
@@ -353,47 +367,48 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-Reference-Grounded Physics Reviewer v2.
+Analysis Plan Editor v1.
 
-Why: Claude Science's value is the closed scientific loop: tools produce
-artifacts, reviewers inspect those artifacts, and conclusions are grounded in
-evidence. Vidura can now create reproducible Pythia runs and attach HEP
-reference packs, including refreshed live sources. The next step is making the
-reviewer consume those reference packs so it can flag unsupported claims,
-missing citations, failed source coverage, and overclaims against public
-literature/data context.
+Why: Vidura should not be a black-box run button. The workbench now produces
+auditable runs and reviewer findings after execution, but users still cannot
+inspect and adjust the generated physics assumptions before execution. The next
+step is a compact pre-run review surface for the deterministic `SimulationSpec`
+and `AnalysisPlan` so a user can accept, edit, or cancel before Pythia work
+starts.
 
 Scope:
 
-- extend reviewer input construction to include persisted `reference_pack.json`
-  content: query, tags, references, source IDs, URLs, source attribution, and
-  refresh statuses;
-- update the model reviewer prompt/schema so findings can cite reference IDs
-  from the pack and must not invent references;
-- add deterministic fallback checks for missing reference packs, failed/partial
-  source refreshes, citation-sensitive summaries with no supporting references,
-  and final-summary claims that mention external measurements without citations;
-- keep reviewer execution evidence-driven and artifact-only: no live source API
-  calls and no refresh during export;
-- show reference-backed reviewer findings compactly in the existing Reviewer /
-  Run Quality area without redesigning Run Evidence;
-- include reference-grounded reviewer output in `physics_reviewer.json`,
-  `manifest.json`, and `run_report.md`;
-- add fixture-driven regression coverage for reference-pack input shaping,
-  missing-pack fallback, source-status warnings, response parsing with
-  reference IDs, and export serialization.
+- add a pre-execution Analysis Plan review state after intent/planning and
+  before codegen/runner;
+- surface the generated plan in the existing thread UI with editable fields for
+  event count, seed, process settings, cuts, observables/output files, and
+  analysis-family assumptions;
+- support Accept Run, Edit & Run, and Cancel without introducing a schema
+  migration;
+- persist the accepted/edited plan into the existing run evidence path as
+  `simulation_spec.json` and record whether the plan was user-edited in run
+  configuration or evidence metadata;
+- reuse existing parameterized-rerun editing helpers where they fit, but do not
+  collapse this into rerun-only behavior;
+- add deterministic validation for edits before codegen so malformed cuts,
+  empty observables, invalid event counts, and duplicate output files do not
+  reach the runner;
+- keep exact rerun, parameterized rerun, export, reviewer, reference refresh,
+  and the regression harness behavior intact;
+- add fixture-driven regression coverage for plan edit validation and spec
+  serialization.
 
 ## Next 8 Product Slices
 
-1. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
-2. Analysis Plan Editor so users can review/edit assumptions before execution.
-3. Native physics artifact viewer upgrades: richer histograms, tables, and
+1. Analysis Plan Editor so users can review/edit assumptions before execution.
+2. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
-4. Reusable HEP analysis templates and skills.
-5. Public-data comparison v1 against HEPData where compatible observables exist.
-6. Local compute session model with environment capture, preparing for SSH/HPC.
-7. Portable cited run bundles with stronger manifest/environment capture.
-8. Publication/analysis-note export with reviewer-gated claims.
+3. Reusable HEP analysis templates and skills.
+4. Public-data comparison v1 against HEPData where compatible observables exist.
+5. Local compute session model with environment capture, preparing for SSH/HPC.
+6. Portable cited run bundles with stronger manifest/environment capture.
+7. Publication/analysis-note export with reviewer-gated claims.
+8. Formalize the script regression harness into an Xcode test target.
 
 ## Non-Goals
 

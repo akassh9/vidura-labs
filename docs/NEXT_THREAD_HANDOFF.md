@@ -393,84 +393,128 @@ HEP Reference Pack Retrieval v1:
   was done during merge review. The next product gap is not fetching sources;
   it is making reviewer output use those sources.
 
+Reference-Grounded Physics Reviewer v2:
+
+- PR #21: `https://github.com/akassh9/vidura-labs/pull/21`
+- Merged at `315de7839be50a82ec4ccb4ca381c004a8260044`.
+- Reviewer input now includes persisted `reference_pack.json` content: query,
+  tags, stable reference IDs, sources, DOI/arXiv/INSPIRE/HEPData IDs, URLs,
+  snippets, and `source_statuses`.
+- `PhysicsReviewerFinding` now includes `reference_ids`; old
+  `physics_reviewer.json` artifacts decode with missing `reference_ids`
+  defaulting to `[]`.
+- The OpenAI structured schema now requires `reference_ids`.
+- Parser sanitization drops model-provided reference IDs that are not present in
+  the supplied reference pack.
+- Deterministic fallback warns on:
+  - missing completed-run reference packs;
+  - failed or partial source statuses;
+  - source-specific missing references;
+  - external measurement/literature claims without support;
+  - citation-sensitive overclaims backed only by local artifacts.
+- Existing reviewer rows show compact reference ID chips.
+- Export preserves reviewer `reference_ids` in `manifest.json` and
+  `run_report.md`.
+- Reviewer and export remain artifact-only. They do not call arXiv, INSPIRE,
+  HEPData, PDG, OpenAI source retrieval, or Refresh References.
+- Harness coverage in `./script/reproducibility_regression.sh`:
+  - reference-pack input shaping;
+  - source-status shaping;
+  - response parsing with valid and invented reference IDs;
+  - missing-pack fallback;
+  - partial source-status fallback;
+  - old reviewer artifact decode compatibility;
+  - export-style serialization with `reference_ids`.
+- CTO review validation before merge:
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch from `.codex/DerivedData`.
+  - `git diff --check origin/main...HEAD` passed.
+  - `git diff --cached --check` passed.
+  - Tracked-file hygiene and diff/staged diff secret scans were clean.
+  - GitHub reported no checks configured for the branch.
+- Known residual gap: no fresh simulation smoke run and no manual native UI
+  click-through of a newly generated reviewer artifact during merge review.
+
 ## Next Product Slice
 
-Reference-Grounded Physics Reviewer v2.
+Analysis Plan Editor v1.
 
-Why this next: Vidura now has deterministic run evidence, run quality checks,
-Physics Reviewer v1, baseline HEP reference packs, and an explicit source
-refresh workflow. The next trust gap is whether the reviewer can use those
-references to separate artifact-backed claims, citation-backed claims, and
-unsupported claims.
+Why this next: Vidura can now create reproducible runs and review them against
+artifacts and references after execution. The remaining trust gap is before
+execution: users cannot inspect or correct the generated physics plan before
+codegen and Pythia run. The app should become a workbench, not a black-box
+prompt-to-run pipeline.
 
-This should stay small: extend reviewer input and output around persisted
-reference packs. Do not add another retrieval workflow, do not redesign Run
-Evidence, and do not make reviewer/export paths call live source APIs.
+This should stay small: a compact pre-run plan review/editor for
+`SimulationSpec` and `AnalysisPlan` that lets the user accept, edit, or cancel
+before codegen. Do not redesign the whole thread UI and do not add a schema
+migration unless there is a hard reason.
 
 Recommended scope:
 
-- extend the pure reviewer input builder to include the persisted
-  `reference_pack.json`: query, tags, references, URLs, DOI/arXiv/INSPIRE/
-  HEPData IDs, source attribution, and `source_statuses`;
-- update `PhysicsReviewerAgent` structured output and prompt so findings can
-  cite reference IDs from the pack and must not invent citations;
-- add deterministic fallback warnings for missing reference packs, failed or
-  partial source refreshes, and final-summary language that mentions external
-  measurements/literature without a reference;
-- keep the reviewer artifact-driven: it may consume existing reference packs but
-  must not refresh references or call live APIs;
-- show reference-backed reviewer findings compactly in the existing reviewer
-  area near Run Quality and References;
-- ensure `physics_reviewer.json`, Export Run Bundle `manifest.json`, and
-  `run_report.md` preserve any reference IDs attached to reviewer findings;
-- add fixture-driven regression coverage for reference input shaping, missing
-  pack fallback, source-status warnings, response parsing with reference IDs,
-  and export-style serialization.
+- after guide/intent/planning produces a `SimulationSpec`, pause before codegen
+  and surface the plan for review;
+- show editable fields for event count, seed, process settings, cuts,
+  observables/output files, and the analysis family/assumptions;
+- support Accept Run, Edit & Run, and Cancel;
+- persist the accepted or edited spec through the existing evidence path as
+  `simulation_spec.json`;
+- record whether the plan was user-edited in run configuration or evidence
+  metadata without a schema migration if possible;
+- reuse parameterized-rerun editing helpers where they fit, but this must work
+  for first-run execution, not only variants;
+- add deterministic validation for plan edits before codegen: positive event
+  count, valid seed, non-empty observables, safe process/cut settings, and no
+  duplicate output filenames;
+- keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run
+  Quality, Physics Reviewer, HEP References, Refresh References, and the
+  regression harness working.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
   Run Quality, Physics Reviewer, and regression harness behavior remains intact;
-- reviewer output can distinguish artifact evidence from reference/citation
-  evidence;
-- reviewer findings never cite sources that are not present in
-  `reference_pack.json`;
-- missing/failed reference coverage is surfaced as a warning rather than hiding
-  behind a clean review;
-- no live source APIs are called during reviewer execution or export;
+- a newly planned run can be accepted unchanged and proceeds to existing
+  codegen/runner behavior;
+- edited event count, seed, process/cut settings, and output files affect the
+  persisted `simulation_spec.json` and generated `run.cc`;
+- canceling a plan leaves a clear non-running state and does not create a
+  misleading completed run;
+- malformed edits are blocked with compact validation messages before codegen;
+- no existing rerun/export/reviewer/reference path regresses;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Start with `PhysicsReviewerAgent` and the pure evidence/input-building path.
-Avoid wiring this into source retrieval. The reviewer should consume the
-persisted pack that already exists for the run.
+Start with the smallest interruption point in `OrchestratorService`: after
+`AnalysisPlannerAgent` produces a `SimulationSpec`, before code generation and
+execution. The UI can be a compact pending-plan surface in the existing thread
+detail view.
 
 Suggested shape:
 
-- Reuse `HEPReferencePack` and the existing artifact resolver/adapter patterns.
-- Add small Codable fields to reviewer findings only if the current model cannot
-  attach reference IDs cleanly.
-- Keep old `physics_reviewer.json` artifacts decodable if the reviewer schema
-  changes.
-- In the model prompt, require reference IDs to come from supplied references
-  only; if no reference supports a claim, the reviewer should say that.
-- Let deterministic fallback produce conservative warnings rather than pretending
-  a run is citation-grounded.
-- Keep UI changes quiet and dense: a few reference chips/IDs in existing
-  reviewer findings are enough for this slice.
+- Add a small pending-plan model/state rather than a new persistence table.
+- Keep the editor dense and operational; avoid a wizard or marketing-style
+  screen.
+- Prefer plain SwiftUI controls: steppers/text fields for numeric values,
+  editable lists for settings/output files, and clear Accept/Edit/Cancel
+  actions.
+- Keep validation pure and fixture-tested.
+- When an edited plan runs, downstream codegen, evidence persistence, references,
+  quality, reviewer, compare, and export should see the edited spec as the
+  source of truth.
 
 ## Acceptance Criteria
 
-- Reviewer input includes persisted reference-pack content when available.
-- Reviewer findings can carry reference IDs/URLs from the pack.
-- Missing packs, failed source statuses, and unsupported citation-sensitive
-  claims produce warnings in deterministic fallback coverage.
-- Export behavior remains deterministic and serializes persisted reviewer
-  findings and reference packs only.
-- Existing Physics Reviewer, Run Quality, HEP Reference, and lineage harness
-  cases still pass.
+- First-run execution can pause for plan review, then proceed after Accept Run.
+- Edit & Run modifies the actual `SimulationSpec` used by codegen and evidence.
+- Cancel stops the pending execution cleanly.
+- Invalid plan edits are blocked before codegen.
+- Existing Physics Reviewer, Run Quality, HEP Reference, lineage, rerun, compare,
+  export, and refresh harness cases still pass.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - `./script/reproducibility_regression.sh` succeeds.

@@ -18,7 +18,7 @@ Start by reading:
 
 Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
 
-Your task: implement the next slice, Reference-Grounded Physics Reviewer v2.
+Your task: implement the next slice, Analysis Plan Editor v1.
 
 Context:
 - Run Evidence / Provenance exists.
@@ -32,30 +32,35 @@ Context:
 - Physics Reviewer Agent v1 is merged.
 - HEP Source Connectors v1 is merged.
 - HEP Reference Pack Retrieval v1 is merged.
-- Completed runs persist `reference_pack.json`; users can explicitly refresh it from Run Evidence; refreshed packs include `source_statuses`.
-- The gap: `PhysicsReviewerAgent` still mostly reviews against run artifacts and deterministic quality findings. It should now consume persisted HEP reference packs so it can distinguish artifact-backed claims, citation-backed claims, and unsupported claims.
+- Reference-Grounded Physics Reviewer v2 is merged.
+- The app can now run, rerun, compare, export, refresh references, and review completed runs against artifacts and references.
+- The gap: users still cannot inspect or adjust the generated `SimulationSpec` / `AnalysisPlan` before codegen and Pythia execution. This makes the app feel too black-box for a physics workbench.
 
 Implementation target:
-1. Extend the pure reviewer input/evidence builder to include persisted `reference_pack.json` content when available: query, tags, references, URLs, DOI/arXiv/INSPIRE/HEPData IDs, source attribution, and `source_statuses`.
-2. Update `PhysicsReviewerAgent` structured output and prompt so reviewer findings can attach reference IDs from the provided pack. The model must not invent citations or cite references not present in the pack.
-3. Add deterministic fallback checks for:
-   - missing reference pack on a completed run;
-   - failed or partial source refresh statuses;
-   - final-summary language that mentions external measurements, literature, PDG, HEPData, arXiv, INSPIRE, citations, or published results without a supporting reference;
-   - citation-sensitive overclaims where only local simulation artifacts exist.
-4. Keep reviewer execution artifact-only. Do not call arXiv, INSPIRE, HEPData, PDG, OpenAI source retrieval, or Refresh References from the reviewer or export path.
-5. Persist the upgraded reviewer result in `physics_reviewer.json` while keeping old reviewer artifacts decodable if the schema changes.
-6. Show reference-backed reviewer findings compactly in the existing reviewer area near Run Quality and References. Avoid a broad Run Evidence redesign.
-7. Ensure Export Run Bundle preserves reviewer reference IDs in `manifest.json` and `run_report.md`, while continuing to serialize the persisted reference pack only.
-8. Add fixture-driven regression coverage to `./script/reproducibility_regression.sh` for reference-pack input shaping, missing-pack fallback, source-status warnings, response parsing with reference IDs, old-artifact decode compatibility if schema changes, and export-style serialization.
-9. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, Physics Reviewer, HEP References, Refresh References, and the existing regression harness working.
+1. Add a compact pre-execution Analysis Plan review state after `AnalysisPlannerAgent` produces a `SimulationSpec` and before codegen/runner execution.
+2. Surface the pending plan in the existing thread UI with editable fields for:
+   - event count;
+   - random seed;
+   - process settings;
+   - cuts/settings such as `PhaseSpace:pTHatMin`;
+   - observables and output files;
+   - analysis family / assumptions.
+3. Support three actions:
+   - Accept Run: use the generated plan unchanged and continue to existing codegen/runner behavior.
+   - Edit & Run: validate edits, then use the edited `SimulationSpec` as the source of truth for codegen and evidence.
+   - Cancel: stop the pending execution cleanly without producing a misleading completed run.
+4. Persist the accepted/edited spec through the existing evidence path as `simulation_spec.json`.
+5. Record whether a plan was user-edited in run configuration or evidence metadata without a schema migration if possible.
+6. Add deterministic validation before codegen for invalid event counts, invalid seed values, empty observables, unsafe/empty process or cut settings, and duplicate output filenames.
+7. Reuse existing parameterized-rerun editing helpers where they fit, but this must work for first-run execution, not only variants.
+8. Keep downstream behavior unchanged: generated `run.cc`, charts, evidence, reference packs, Run Quality, Physics Reviewer, Run Compare, exports, exact reruns, and parameterized reruns should all see the accepted/edited spec as the actual run spec.
+9. Add fixture-driven regression coverage to `./script/reproducibility_regression.sh` for plan edit validation and spec serialization.
 
 Implementation constraints:
-- Do not introduce a parallel reference model. Reuse `HEPReferences.swift`.
-- Do not make the regression harness depend on live network calls or live OpenAI calls.
-- Do not trigger live reference refresh from reviewer execution.
-- No schema migration unless you can justify why artifacts/messages/run configuration cannot carry this.
-- Keep UI quiet and dense. Prefer small reference chips/IDs in existing reviewer rows over a new panel.
+- Keep the UI quiet, dense, and operational. Do not add a wizard or broad redesign.
+- Avoid a schema migration unless there is a hard reason.
+- Do not route this through OpenAI after the user edits the plan unless existing codegen already does that for execution.
+- Do not break exact rerun or parameterized rerun contracts.
 - Do not print `.env` or API keys.
 
 Validation:
@@ -72,11 +77,11 @@ Report back with:
 - PR URL
 - changed files
 - validation commands and results
-- how reviewer input now includes reference packs
-- structured output/schema changes, if any
-- deterministic fallback cases added
-- how unsupported or missing-citation claims are surfaced
-- export behavior
+- where the pending-plan state lives
+- how Accept Run, Edit & Run, and Cancel work
+- which `SimulationSpec` fields are editable
+- validation rules added
+- how edited specs are persisted and marked
 - harness cases added
 - any fresh smoke run or why it was skipped
 - known gaps or follow-up recommendations
