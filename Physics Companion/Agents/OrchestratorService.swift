@@ -376,6 +376,68 @@ final class OrchestratorService: ObservableObject {
         }
     }
 
+    /// Refreshes a completed run's HEP references from bounded live sources.
+    /// This is intentionally user-triggered and separate from normal run completion.
+    @discardableResult
+    func refreshReferences(
+        run sourceRun: SimulationRun,
+        chartPayloads: [ChartPayload],
+        messages: [ChatMessage]
+    ) async throws -> HEPReferencePack {
+        guard sourceRun.status == .completed else {
+            throw OrchestratorError.rerunUnavailable("Only completed runs can refresh references.")
+        }
+
+        currentPhase = "references"
+        lastError = nil
+        activeThreadId = sourceRun.threadId
+        defer {
+            currentPhase = "idle"
+            activeThreadId = nil
+        }
+
+        let packURL = try referencePackURL(for: sourceRun)
+        let existingPack = decodeReferencePack(at: packURL)
+        let spec = decodeSimulationSpec(for: sourceRun)
+        let sourceMessages = messages.isEmpty
+            ? (try? await store.fetchRunMessagesAndParents(forRun: sourceRun.id)) ?? []
+            : messages
+        let prompt = sourceMessages
+            .filter { $0.role == "user" || $0.sender == .user }
+            .last?
+            .content ?? sourceRun.title
+
+        let context = HEPReferenceQueryContext(
+            runTitle: sourceRun.title,
+            prompt: prompt,
+            simulationSpec: spec,
+            chartTitles: chartPayloads.map(\.title)
+        )
+        let refreshedPack = await HEPReferenceRetriever.refresh(
+            existingPack: existingPack,
+            context: context
+        )
+        try writeReferencePack(refreshedPack, to: packURL)
+
+        let refreshedRun = try await store.fetchRun(id: sourceRun.id)
+        if !refreshedRun.artifacts.contains(where: {
+            URL(fileURLWithPath: $0.relativePath).lastPathComponent == "reference_pack.json"
+        }) {
+            let artifact = ArtifactRef(
+                id: UUID().uuidString,
+                kind: "reference",
+                label: "reference_pack.json",
+                relativePath: packURL.path,
+                createdAt: ISO8601DateFormatter().string(from: Date())
+            )
+            try await store.addArtifact(runId: sourceRun.id, artifact: artifact)
+        } else {
+            try await store.loadRuns(forThread: sourceRun.threadId)
+        }
+
+        return refreshedPack
+    }
+
     /// Creates a sibling run from persisted evidence and executes the exact saved source/spec.
     /// This intentionally bypasses guide, intent extraction, planning, and code generation.
     @discardableResult
@@ -1629,6 +1691,50 @@ final class OrchestratorService: ObservableObject {
         }
 
         throw OrchestratorError.rerunUnavailable("Missing \(fileName) evidence for exact rerun.")
+    }
+
+    private func referencePackURL(for run: SimulationRun) throws -> URL {
+        if let artifact = run.artifacts.first(where: {
+            URL(fileURLWithPath: $0.relativePath).lastPathComponent == "reference_pack.json"
+        }) {
+            let url = URL(fileURLWithPath: artifact.relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return url
+        }
+
+        if let specPath = try? evidencePath(for: run, named: "simulation_spec.json") {
+            let url = URL(fileURLWithPath: specPath)
+                .deletingLastPathComponent()
+                .appendingPathComponent("reference_pack.json")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return url
+        }
+
+        let runFolder = PathUtils.simulationsDir.appendingPathComponent(run.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: runFolder, withIntermediateDirectories: true)
+        return runFolder.appendingPathComponent("reference_pack.json")
+    }
+
+    private func decodeReferencePack(at url: URL) -> HEPReferencePack? {
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(HEPReferencePack.self, from: data)
+    }
+
+    private func decodeSimulationSpec(for run: SimulationRun) -> SimulationSpec? {
+        guard let specPath = try? evidencePath(for: run, named: "simulation_spec.json"),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: specPath)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SimulationSpec.self, from: data)
+    }
+
+    private func writeReferencePack(_ pack: HEPReferencePack, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(pack)
+        try data.write(to: url, options: .atomic)
     }
 
     private func finalizeFailure(
