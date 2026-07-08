@@ -56,13 +56,15 @@ declared outputs, low event counts, event-count mismatches, histogram overflow
 markers, suspicious inclusive/minimum-bias wording, and log warning/error
 markers. New completed runs also persist first-pass Physics Reviewer findings
 that check final interpretation text against run evidence and deterministic
-quality findings. Completed simulation runs also get a deterministic baseline
-HEP `reference_pack.json` artifact with typed arXiv, INSPIRE, HEPData, and PDG
-references that can be displayed in Run Evidence and included in exports.
-Completed runs can explicitly refresh that reference pack from Run Evidence
-using bounded arXiv, INSPIRE, HEPData, and PDG retrieval. Refreshed packs store
-per-source statuses in `source_statuses` and exports serialize the persisted
-pack without live network calls.
+quality findings. Reviewer findings now also consume persisted HEP reference
+packs and can attach sanitized `reference_ids` that point only to references in
+the run's `reference_pack.json`. Completed simulation runs get a deterministic
+baseline HEP `reference_pack.json` artifact with typed arXiv, INSPIRE, HEPData,
+and PDG references that can be displayed in Run Evidence and included in
+exports. Completed runs can explicitly refresh that reference pack from Run
+Evidence using bounded arXiv, INSPIRE, HEPData, and PDG retrieval. Refreshed
+packs store per-source statuses in `source_statuses` and exports serialize the
+persisted pack without live network calls.
 
 ## Runtime Pipeline
 
@@ -85,8 +87,8 @@ pack without live network calls.
 11. `PhysicsSummaryAgent` asks OpenAI for final interpretation, falling back to
     a deterministic summary if needed.
 12. `PhysicsReviewerAgent` reviews completed-run interpretation against
-    evidence, Run Quality findings, chart summaries, and logs, with deterministic
-    fallback if model review is unavailable.
+    evidence, Run Quality findings, chart summaries, logs, and persisted HEP
+    reference packs, with deterministic fallback if model review is unavailable.
 13. `HEPReferencePackAssembler` writes a deterministic baseline reference pack
     for completed runs.
 14. The user-triggered Refresh References action can update `reference_pack.json`
@@ -115,9 +117,8 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add Reference-Grounded Physics Reviewer v2 so reviewer findings consume
-   persisted HEP reference packs and flag missing citations, failed source
-   coverage, and unsupported external-physics claims.
+1. Add Analysis Plan Editor v1 so users can review, edit, accept, or cancel the
+   generated `SimulationSpec` before codegen and Pythia execution.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of
