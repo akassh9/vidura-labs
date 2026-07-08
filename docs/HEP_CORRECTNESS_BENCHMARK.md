@@ -20,6 +20,19 @@ units, and untraceable numbers.
 - Generate reports into ignored output paths.
 - Fail with a nonzero exit code when expected findings are not detected.
 
+## Current Status
+
+HEP Correctness Benchmark Harness v0 is implemented:
+
+- `./script/hep_correctness_benchmark.sh`
+- `benchmarks/hep_correctness/README.md`
+- 11 fixtures under `benchmarks/hep_correctness/tasks/`
+- generated reports under ignored `benchmark-results/hep_correctness/`
+
+The harness currently proves the offline fixture/scoring shape. The next
+milestone is a public-style head-to-head report that compares Vidura findings
+against frozen baseline outputs with explicit provenance labels.
+
 ## Suggested Layout
 
 ```text
@@ -147,8 +160,10 @@ benchmark writeup.
 
 ## Later Milestones
 
-- Add a public benchmark report comparing Vidura against general AI output
-  fixtures.
+- Add a public benchmark report comparing Vidura against frozen general AI
+  output fixtures.
+- Replace or augment synthetic baseline outputs with live-captured,
+  provenance-labeled model outputs when legally and operationally clean.
 - Add HEPData/Rivet/YODA comparisons for published-measurement reproduction.
 - Track a growing corpus of verified HEP runs, failures, corrections, and
   reviewer judgments.

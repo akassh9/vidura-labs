@@ -196,13 +196,16 @@ Completed:
   sanitized `reference_ids`, deterministic citation-gap fallbacks, compact
   reference ID chips in reviewer findings, and export preservation of reviewer
   reference IDs.
+- HEP Correctness Benchmark Harness v0 with 11 offline synthetic fixtures,
+  deterministic scoring, competitor-output slots, and generated JSON/Markdown
+  reports under `benchmark-results/hep_correctness/`.
 
 This is a strong Phase 0/1 foundation. It is also enough to start testing the
 real wedge: whether Vidura can catch HEP correctness failures better than a
 general-purpose model workflow. It is still far from the full workbench because
-it lacks public benchmark proof, HEPData/Rivet comparison, managed compute,
-native physics artifact viewers, richer review workflows, and publication
-workflows.
+it lacks public benchmark proof from real or clearly labeled frozen competitor
+outputs, HEPData/Rivet comparison, managed compute, native physics artifact
+viewers, richer review workflows, and publication workflows.
 
 ## Execution Principles
 
@@ -268,7 +271,8 @@ Remaining:
 
 Goal: show that Vidura catches real HEP mistakes that general AI workflows miss.
 
-Status: reviewer foundation complete; public benchmark proof not started.
+Status: benchmark harness foundation complete; public benchmark proof not
+started.
 
 Completed:
 
@@ -293,21 +297,32 @@ Completed:
   claims without support;
 - reviewer reference IDs in Run Evidence, `physics_reviewer.json`, exported
   `manifest.json`, and `run_report.md`.
+- HEP Correctness Benchmark Harness v0:
+  `./script/hep_correctness_benchmark.sh`;
+- 11 fixture tasks covering low statistics, missing evidence, empty outputs,
+  event-count mismatch, overflow, misleading process/cut wording, unsupported
+  external claims, citation gaps, invented references, figure/summary mismatch,
+  and unit ambiguity;
+- benchmark scoring for expected category, severity, required message
+  substrings, evidence references, reference IDs, false positives, and invalid
+  reviewer reference IDs;
+- offline JSON/Markdown reports written to ignored
+  `benchmark-results/hep_correctness/` paths.
 
 Needed:
 
-- HEP Correctness Benchmark v0 with fixture tasks, expected findings, scoring,
-  and report output;
 - head-to-head evaluation artifacts for Vidura reviewer versus general model
   outputs on the same tasks;
+- a public-style benchmark report generated from the harness that clearly
+  labels synthetic, frozen, and live-captured baselines;
 - fresh smoke runs that exercise persisted reference-grounded reviewer artifacts
   end to end;
 - reviewer checks that compare generated distributions to actual public data
   once HEPData comparison is available.
 
 The next trust gap is external proof. The codebase has a promising reviewer
-loop; now Vidura needs a benchmark that demonstrates whether this correctness
-edge is real.
+loop and a first benchmark harness; now Vidura needs a report that makes the
+correctness claim legible and defensible.
 
 ### Phase 3: Become Domain-Ready For HEP
 
@@ -409,36 +424,36 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-HEP Correctness Benchmark Harness v0.
+Public Benchmark Report v0.
 
-Why: the highest-leverage way to shed the OpenAI-wrapper image is to publish
-evidence that Vidura catches physics mistakes general AI workflows miss. The
-app already has run evidence, deterministic quality checks, reference packs,
-and a reference-grounded reviewer. The next step is an offline benchmark harness
-that turns those capabilities into a measurable correctness claim.
+Why: the harness now exists, but the product still needs a credible artifact
+that communicates the correctness edge. The next step is to turn the offline
+fixtures and competitor-output slots into a transparent head-to-head benchmark
+report: Vidura findings versus frozen general-AI baseline outputs, with clear
+provenance and no live model dependency.
 
 Scope:
 
-- define a fixture-backed benchmark task format for HEP correctness cases;
-- create an initial task suite covering low statistics, missing artifacts,
-  event-count mismatch, overflow, biased cuts, misleading process wording,
-  unsupported external-measurement claims, missing citations, invented
-  references, figure/summary mismatch, and unit/observable ambiguity;
-- add a local benchmark runner script that executes without live OpenAI or live
-  network calls;
-- score Vidura deterministic/reviewer findings against expected findings:
-  severity, category, evidence references, and reference IDs;
-- emit machine-readable JSON and human-readable Markdown reports;
-- include baseline competitor-output fixtures so later head-to-head reports can
-  compare Vidura against general AI outputs without depending on live model
-  calls in the harness;
-- keep the existing app validation and reproducibility harness intact.
+- extend benchmark reporting to produce a public-style summary suitable for a
+  README, blog post, or paper appendix;
+- score each frozen competitor output against expected task failures without
+  adding live model calls;
+- make provenance explicit: fixture ID, task category, expected finding, Vidura
+  match, competitor miss/hit, and evidence references;
+- report aggregate metrics such as expected findings caught, baseline misses,
+  false positives, invalid reference IDs, and category breakdown;
+- update fixture schema/docs only as needed to distinguish synthetic baseline
+  outputs from future live-captured competitor outputs;
+- do not claim ChatGPT/Claude/Research Copilot results unless the underlying
+  outputs are real, captured, labeled, and committed with provenance;
+- keep `./script/hep_correctness_benchmark.sh` deterministic and offline.
 
 ## Next 8 Product Slices
 
-1. HEP Correctness Benchmark Harness v0.
-2. Public benchmark report v0: Vidura reviewer versus general AI output
+1. Public benchmark report v0: Vidura reviewer versus general AI output
    fixtures.
+2. Replace or augment synthetic competitor fixtures with live-captured,
+   provenance-labeled model outputs where legally and operationally clean.
 3. HEPData/Rivet/YODA comparison path for benchmark-grade published-measurement
    reproduction.
 4. Analysis Plan Editor so users can review/edit assumptions before execution.

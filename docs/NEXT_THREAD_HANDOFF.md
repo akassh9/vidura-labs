@@ -447,89 +447,128 @@ Reference-Grounded Physics Reviewer v2:
 - Known residual gap: no fresh simulation smoke run and no manual native UI
   click-through of a newly generated reviewer artifact during merge review.
 
+HEP Correctness Benchmark Harness v0:
+
+- PR #24: `https://github.com/akassh9/vidura-labs/pull/24`
+- Merged at `f0d3fe1`.
+- Added `./script/hep_correctness_benchmark.sh`.
+- Added benchmark schema/docs under `benchmarks/hep_correctness/README.md`.
+- Added 11 synthetic offline fixtures under
+  `benchmarks/hep_correctness/tasks/`.
+- Fixture categories cover:
+  - low statistics;
+  - missing expected evidence;
+  - empty declared output;
+  - event-count mismatch;
+  - histogram overflow;
+  - hard-process / pT-hat cut wording;
+  - unsupported external claims;
+  - citation gaps;
+  - invented reference IDs;
+  - figure/summary mismatch;
+  - unit/observable ambiguity.
+- Scoring checks expected category, severity, required message substrings,
+  evidence references, reference IDs, false-positive counts, and invalid
+  reviewer reference IDs.
+- Reports are generated into ignored paths:
+  - `benchmark-results/hep_correctness/report.json`
+  - `benchmark-results/hep_correctness/report.md`
+- The benchmark is fully offline: no live OpenAI calls and no live network or
+  source calls.
+- CTO review validation before merge:
+  - `./script/hep_correctness_benchmark.sh` succeeded with 11/11 tasks and
+    11/11 expected findings.
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch.
+  - `git diff --check origin/main...HEAD` passed.
+  - Tracked-file hygiene and committed-diff secret scans were clean.
+- Known residual gap: v0 uses synthetic fixtures and frozen offline reviewer
+  responses for reviewer-only cases. Competitor-output slots exist, but the
+  harness does not yet produce a public head-to-head benchmark report.
+
 ## Next Product Slice
 
-HEP Correctness Benchmark Harness v0.
+Public Benchmark Report v0.
 
-Why this next: the fastest way to move away from the "OpenAI wrapper" critique
-is to prove Vidura catches physics mistakes that general AI workflows miss. The
-app already has evidence artifacts, deterministic Run Quality, HEP references,
-and a reference-grounded reviewer. Now those pieces need to become a measurable
-benchmark and report.
+Why this next: the harness now exists and passes offline, but the moat claim is
+not yet legible. The next slice should turn the fixture suite and
+competitor-output slots into a transparent head-to-head report: Vidura findings
+versus frozen general-AI baseline outputs, with explicit provenance and no live
+model dependency.
 
-This should stay small and offline: fixture-backed benchmark tasks, a local
-runner, deterministic scoring, and JSON/Markdown reports. Do not depend on live
-OpenAI calls or live network calls for v0.
+This should stay small and honest: use checked-in/frozen baseline outputs and
+label them as synthetic or captured. Do not claim live ChatGPT, Claude, or other
+competitor performance unless the exact outputs are real, captured, labeled,
+and committed with provenance.
 
 Recommended scope:
 
-- add a benchmark task fixture format for correctness cases;
-- create an initial suite of 10-15 fixture tasks covering:
-  - low statistics;
-  - missing/empty artifacts;
-  - event-count mismatch;
-  - histogram overflow;
-  - hard-process or pT-hat cuts described as inclusive/minimum-bias;
-  - unsupported external-measurement/literature claims;
-  - missing citations;
-  - invented or irrelevant reference IDs;
-  - figure/summary mismatch;
-  - unit or observable ambiguity;
-- implement a local benchmark runner script, likely
-  `./script/hep_correctness_benchmark.sh`;
-- keep the benchmark harness deterministic and offline: no live model calls and
-  no live source/network calls;
-- score findings against expected severity, category, evidence references, and
-  reference IDs;
-- emit both JSON and Markdown reports under an ignored/generated output
-  directory;
-- include competitor-output fixture slots so later head-to-head reports can
-  compare Vidura with general AI outputs without making v0 depend on live model
-  calls;
-- add or reuse pure helpers from `RunQualityAnalyzer`, `PhysicsReviewerAgent`,
-  and `HEPReferences.swift` instead of duplicating logic.
+- extend benchmark reporting so `./script/hep_correctness_benchmark.sh` emits a
+  head-to-head section in `report.json` and `report.md`;
+- score each `competitor_outputs` entry against task expectations using fixture
+  annotations, without live model calls;
+- add any minimal schema fields needed for baseline provenance, such as
+  `baseline_type`, `model_label`, `captured_at`, `source`, or
+  `expected_misses`;
+- keep the existing 11 fixtures passing and update them with transparent
+  baseline metadata;
+- add aggregate metrics:
+  - Vidura expected findings caught;
+  - baseline expected misses;
+  - false positives;
+  - invalid reference IDs removed;
+  - category breakdown;
+- add a checked-in public-style template or generated Markdown section that can
+  seed a README/blog/paper appendix;
+- keep generated reports under ignored `benchmark-results/`;
+- keep the benchmark fully deterministic and offline.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
   Run Quality, Physics Reviewer, and regression harness behavior remains intact;
-- the benchmark runner can execute locally without network or OpenAI;
-- benchmark tasks encode expected reviewer/quality findings;
-- the runner reports pass/fail plus category/severity/evidence/reference-ID
-  scoring;
-- generated reports are not committed by default;
+- `./script/hep_correctness_benchmark.sh` still executes locally without
+  network or OpenAI;
+- `report.json` includes per-task and aggregate Vidura-versus-baseline scoring;
+- `report.md` includes a readable head-to-head benchmark summary;
+- fixture baseline outputs clearly state whether they are synthetic,
+  hand-authored, or live-captured;
+- no generated reports are committed by default;
 - the existing reproducibility regression harness still passes;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Start outside the app UI. This is a benchmark harness and corpus, not a new
-screen. The harness should exercise the pure analyzer/reviewer paths with
-fixtures so it can later become a public benchmark and head-to-head report.
+Start inside the existing benchmark harness. This is still not app UI work. The
+deliverable is a credible, reproducible report artifact that explains what was
+tested, what Vidura caught, what the baseline missed, and what is still
+synthetic.
 
 Suggested shape:
 
-- Add a small benchmark directory, for example `benchmarks/hep_correctness/`,
-  with fixture JSON and a checked-in README.
-- Add `script/hep_correctness_benchmark.sh` and Swift or Python runner code
-  under `script/hep_correctness_benchmark/`.
-- Prefer Swift if reusing app structs is straightforward; use Python only for
-  report aggregation if it avoids brittle Swift harness plumbing.
-- Keep fixture artifacts small and synthetic; do not commit generated simulation
-  folders or large binary outputs.
-- Include a clear schema for task metadata, expected findings, and optional
-  competitor outputs.
-- The first benchmark should prove harness shape, not full physics breadth.
+- Update `benchmarks/hep_correctness/README.md` with the head-to-head baseline
+  schema and labeling rules.
+- Extend `script/hep_correctness_benchmark/main.swift` rather than creating a
+  parallel benchmark runner.
+- Treat `competitor_outputs` as frozen fixture data. Do not call live models.
+- Keep all benchmark output deterministic so the same commit produces the same
+  score except for report timestamps if those remain.
+- The report should be honest about limitations: synthetic tasks, frozen
+  baselines, no live model leaderboard yet, no HEPData/Rivet validation yet.
 
 ## Acceptance Criteria
 
 - `./script/hep_correctness_benchmark.sh` runs offline and exits nonzero on
-  failed benchmark expectations.
-- The benchmark emits `report.json` and `report.md` into an ignored output path.
-- At least 10 initial HEP correctness fixtures are included.
-- Findings are scored by expected category, severity, evidence, and reference
-  IDs where applicable.
+  failed Vidura or baseline-report expectations.
+- The benchmark emits `report.json` and `report.md` with Vidura-versus-baseline
+  sections into the ignored output path.
+- The current 11 HEP correctness fixtures remain covered.
+- Baseline outputs have explicit provenance labels and expected miss/hit data.
+- The generated Markdown is readable as a public-style first benchmark report
+  draft.
 - Existing Physics Reviewer, Run Quality, HEP Reference, lineage, rerun,
   compare, export, and refresh harness cases still pass.
 - `./script/build_and_run.sh build` succeeds.
