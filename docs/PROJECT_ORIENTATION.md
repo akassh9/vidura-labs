@@ -56,7 +56,9 @@ declared outputs, low event counts, event-count mismatches, histogram overflow
 markers, suspicious inclusive/minimum-bias wording, and log warning/error
 markers. New completed runs also persist first-pass Physics Reviewer findings
 that check final interpretation text against run evidence and deterministic
-quality findings.
+quality findings. Completed simulation runs also get a deterministic baseline
+HEP `reference_pack.json` artifact with typed arXiv, INSPIRE, HEPData, and PDG
+references that can be displayed in Run Evidence and included in exports.
 
 ## Runtime Pipeline
 
@@ -81,6 +83,8 @@ quality findings.
 12. `PhysicsReviewerAgent` reviews completed-run interpretation against
     evidence, Run Quality findings, chart summaries, and logs, with deterministic
     fallback if model review is unavailable.
+13. `HEPReferencePackAssembler` writes a deterministic baseline reference pack
+    for completed runs; live source refresh is the next implementation step.
 
 ## Supported Analysis Families
 
@@ -104,8 +108,9 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add HEP Source Connectors v1 for arXiv, INSPIRE, HEPData, and PDG reference
-   packs that future summaries and reviewers can cite.
+1. Add HEP Reference Pack Retrieval v1 so completed runs can explicitly refresh
+   references from arXiv, INSPIRE, HEPData, and PDG without making run
+   completion depend on network access.
 2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
 3. Fix `moveThreadToProject` so it preserves runs/messages instead of

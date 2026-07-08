@@ -18,7 +18,7 @@ Start by reading:
 
 Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
 
-Your task: implement the next slice, HEP Source Connectors v1.
+Your task: implement the next slice, HEP Reference Pack Retrieval v1.
 
 Context:
 - Run Evidence / Provenance exists.
@@ -30,42 +30,29 @@ Context:
 - Reproducibility Regression Harness is merged.
 - Run Quality / Sanity Checks is merged.
 - Physics Reviewer Agent v1 is merged.
-- The app can now produce, replay, compare, export, trace, quality-check, and model-review the run record.
-- The next trust gap is external grounding: future summaries and reviewers need typed HEP references, public data links, and canonical source attribution instead of generic unsupported claims.
+- HEP Source Connectors v1 is merged.
+- The app now has typed `HEPReference`, `HEPReferencePack`, source parsers/helpers for arXiv, INSPIRE, HEPData, and PDG, deterministic baseline `reference_pack.json` artifacts, a References block in Run Evidence, and reference metadata in exports.
+- The gap: live fetch helpers exist, but users cannot yet explicitly refresh a run's references from the UI. Normal run completion should not depend on network access.
 
 Implementation target:
-1. Add typed source models such as `HEPReference`, `HEPReferencePack`, and a source enum covering `arxiv`, `inspire`, `hepdata`, and `pdg`.
-2. Add small source-specific connector helpers/clients for:
-   - arXiv Atom API search and arXiv ID URL normalization
-   - INSPIRE literature search/result normalization
-   - HEPData record/search normalization where the public API shape is stable
-   - PDG canonical links/search seeds for common particles/constants
-3. Add a deterministic reference-pack assembler that merges/dedupes references by DOI, arXiv ID, INSPIRE record ID, HEPData record ID, and URL while preserving all source-specific identifiers.
-4. Expose a compact reference pack in the existing research surface. Prefer a small References block or side-panel section over a broad UI redesign.
-5. Include reference-pack metadata in Export Run Bundle if this fits without a broad exporter refactor.
-6. Add fixture-based regression coverage to `./script/reproducibility_regression.sh` for parsing, normalization, dedupe, and export serialization if included.
-7. Do not make the regression harness depend on live network calls.
-8. Keep live network failures visible and non-fatal.
-9. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, Physics Reviewer, and the existing regression harness working.
-
-Connector result fields to prioritize:
-- source
-- title
-- authors or collaboration
-- year
-- abstract/snippet
-- DOI
-- arXiv ID
-- INSPIRE record ID
-- HEPData record ID
-- URL
-- tags/observables when available
+1. Add a user-triggered Refresh References action for completed runs, likely in the existing Run Evidence card near the References block.
+2. Build deterministic query construction from run title, original prompt/messages, `simulation_spec.json`, analysis family, process settings, and chart labels.
+3. Add a small `HEPReferenceRetrievalService` or equivalent helper that calls the existing arXiv, INSPIRE, HEPData, and PDG helpers with bounded result counts.
+4. Capture per-source status: success count, skipped, failed reason, and timestamp.
+5. Merge live results with the existing baseline pack using `HEPReferencePackAssembler`, preserving all DOI, arXiv, INSPIRE, HEPData, URL, source attribution, and tags.
+6. Persist the refreshed `reference_pack.json` artifact and update Run Evidence without a schema migration if possible.
+7. Show compact retrieval state in the References block: last refreshed time, source counts, and partial failures.
+8. Keep Export Run Bundle deterministic. It should serialize the persisted reference pack only and must not call live source APIs during export.
+9. Add fixture-driven regression coverage to `./script/reproducibility_regression.sh` for query construction, per-source status serialization, partial source failure handling, merge behavior, and no-network fallback.
+10. Keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, Physics Reviewer, HEP References, and the existing regression harness working.
 
 Implementation constraints:
-- No schema migration unless you can justify why existing messages, artifacts, or run configuration cannot carry the first reference pack.
-- Avoid broad UI redesign. Add a compact operational reference surface.
-- Export should serialize existing reference packs only; export should not perform live network calls.
-- If model-assisted query planning is added, it must have deterministic fallback query strings.
+- Do not introduce a parallel reference model. Reuse `HEPReferences.swift`.
+- Do not make the regression harness depend on live network calls.
+- A small live smoke query is useful if network is available, but it must be separate from the harness and non-blocking if source services are unavailable.
+- Refreshing references should be explicit and non-fatal when one source fails.
+- No schema migration unless you can justify why artifacts/messages/run configuration cannot carry refresh status.
+- Avoid broad UI redesign. Add a compact operational control/state to the existing Run Evidence surface.
 - Do not print `.env` or API keys.
 
 Validation:
@@ -81,9 +68,11 @@ Report back with:
 - PR URL
 - changed files
 - validation commands and results
-- connector sources implemented
-- how references are surfaced
-- whether reference metadata is included in exports
+- refresh workflow implemented
+- how query construction works
+- how partial source failures are surfaced
+- whether export behavior changed
 - harness cases added
+- any live smoke result or why it was skipped
 - known gaps or follow-up recommendations
 ```

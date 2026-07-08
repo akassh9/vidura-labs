@@ -155,10 +155,14 @@ Completed:
   bundles.
 - Physics Reviewer Agent v1 in completed-run flow, Run Evidence, exports, and
   the regression harness.
+- HEP Source Connectors v1 with typed arXiv, INSPIRE, HEPData, and PDG
+  reference models, fixture-tested parsers, baseline `reference_pack.json`
+  evidence, Run Evidence display, and export metadata.
 
 This is a strong Phase 0/1 foundation. It is still far from the workbench
-benchmark because it lacks domain source connectors, managed compute, native
-physics artifact viewers, richer review workflows, and publication workflows.
+benchmark because it lacks live source-retrieval workflows, managed compute,
+native physics artifact viewers, richer review workflows, and publication
+workflows.
 
 ## Execution Principles
 
@@ -248,10 +252,27 @@ grounding: citations, public data, and reference measurements.
 
 Goal: Vidura understands common HEP workflows and sources on day one.
 
+Status: started.
+
+Completed:
+
+- typed `HEPReference`, `HEPReferencePack`, and `HEPReferenceSource` models;
+- parser/helper layer for arXiv, INSPIRE, HEPData, and PDG;
+- deterministic reference-pack assembler with DOI/arXiv/INSPIRE/HEPData/URL
+  and title dedupe while preserving source attribution and IDs;
+- baseline `reference_pack.json` evidence for completed runs;
+- compact References block in Run Evidence;
+- reference-pack metadata in exported run bundles;
+- fixture regression coverage for parsing, normalization, dedupe, and export
+  serialization.
+
 Needed:
 
-- connectors for arXiv, INSPIRE, HEPData, PDG, CERN Open Data, LHAPDF, and
-  relevant experiment public repositories;
+- user-triggered live retrieval/refresh using arXiv, INSPIRE, HEPData, and PDG
+  helpers;
+- reviewer/summary stages that can consume real reference packs;
+- connectors for CERN Open Data, LHAPDF, and relevant experiment public
+  repositories;
 - analysis templates for common Pythia/Rivet/ROOT tasks;
 - import/export for common formats: ROOT, HepMC, LHE, YODA, CSV/Parquet,
   JSON summaries, LaTeX snippets;
@@ -318,37 +339,41 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-HEP Source Connectors v1.
+HEP Reference Pack Retrieval v1.
 
 Why: Claude Science's differentiator is not just that it runs tools. It checks
 whether artifacts are traceable, figures match code, calculations are sound, and
 outputs can be reproduced against scientific sources. Vidura now has local
-Pythia execution, reproducible runs, deterministic quality checks, and a first
-physics reviewer. The next step is domain grounding: build a small HEP reference
-connector layer that can retrieve and cite arXiv, INSPIRE, HEPData, and PDG
-sources without turning the app into a generic web search tool.
+Pythia execution, reproducible runs, deterministic quality checks, a first
+physics reviewer, and typed HEP reference connectors. The next step is making
+those connectors useful through an explicit retrieval/refresh workflow that
+updates a run or thread reference pack without making normal run completion
+depend on network availability.
 
 Scope:
 
-- add a narrow `HEPReference`/`HEPReferenceConnector` model and source-specific
-  clients/helpers for arXiv, INSPIRE, HEPData, and PDG;
-- build a deterministic reference-pack assembler that normalizes titles,
-  authors/collaborations, IDs, URLs, abstracts/snippets, and source labels;
-- expose a compact reference pack in the existing research surface without a
-  broad UI redesign;
-- make exported bundles include reference-pack metadata when a run/thread has
-  it;
-- add regression coverage for parser/normalization behavior using fixtures, not
-  live network calls;
-- keep live network calls explicit and bounded, with clear errors/fallbacks.
+- add a user-triggered "Refresh References" or equivalent action for completed
+  runs, using deterministic query construction from run title, prompt,
+  simulation spec, analysis family, process settings, and chart labels;
+- call the existing arXiv, INSPIRE, HEPData, and PDG helpers behind a small
+  service that bounds result counts and handles failures per source;
+- merge live results into `reference_pack.json` without losing baseline
+  references or source-specific IDs;
+- show retrieval status and partial-failure information compactly in the
+  existing References surface;
+- keep bundle export deterministic by serializing persisted reference packs only;
+- add fixture-driven coverage for query construction, partial source failures,
+  merge behavior, and status serialization;
+- optionally run a small live smoke query outside the regression harness.
 
 ## Next 8 Product Slices
 
-1. HEP source connectors v1: arXiv, INSPIRE, HEPData, PDG.
-2. Analysis Plan Editor so users can review/edit assumptions before execution.
-3. Native physics artifact viewer upgrades: richer histograms, tables, and
+1. HEP Reference Pack Retrieval v1 with explicit refresh and partial-failure
+   handling.
+2. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
+3. Analysis Plan Editor so users can review/edit assumptions before execution.
+4. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
-4. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
 5. Reusable HEP analysis templates and skills.
 6. Local compute session model with environment capture, preparing for SSH/HPC.
 7. Portable cited run bundles with stronger manifest/environment capture.
