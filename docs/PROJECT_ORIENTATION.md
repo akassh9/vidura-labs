@@ -70,9 +70,10 @@ Evidence using bounded arXiv, INSPIRE, HEPData, and PDG retrieval. Refreshed
 packs store per-source statuses in `source_statuses` and exports serialize the
 persisted pack without live network calls.
 
-The near-term company proof is an offline HEP correctness benchmark: fixture
-tasks with expected reviewer/quality findings, scoring, and reports that show
-whether Vidura catches errors a general AI workflow would miss.
+The near-term company proof is an offline HEP correctness benchmark and
+public-style report: fixture tasks with expected reviewer/quality findings,
+scoring, competitor-output slots, and reports that show whether Vidura catches
+errors a general AI workflow would miss.
 
 ## Runtime Pipeline
 
@@ -125,10 +126,10 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add HEP Correctness Benchmark Harness v0 with fixture tasks, scoring, and
-   offline JSON/Markdown reports.
-2. Produce a public-style benchmark report comparing Vidura's reviewer against
+1. Produce a public-style benchmark report comparing Vidura's reviewer against
    general AI output fixtures.
+2. Replace or augment synthetic competitor fixtures with live-captured,
+   provenance-labeled model outputs when operationally clean.
 3. Add HEPData/Rivet/YODA comparison paths for published-measurement
    reproduction.
 4. Add Analysis Plan Editor v1 so users can review, edit, accept, or cancel the
