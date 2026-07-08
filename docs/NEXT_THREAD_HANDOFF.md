@@ -10,6 +10,14 @@ Vidura Labs is a native macOS physics research companion, starting with
 HEP/Pythia. The product thesis is not "chat with a model"; it is "ask for a
 physics analysis and receive a reproducible scientific run record."
 
+Strategic update: the defensible wedge is not model generation. General models
+can write plausible Pythia code. Vidura's moat should be correctness
+verification in computational HEP: catching wrong units, weak statistics,
+biased cuts, unsupported physics claims, invented citations, figure/output
+mismatches, and untraceable numbers. The model should stay swappable; the
+durable asset is a benchmark and corpus of verified HEP runs, failures,
+corrections, and reviewer judgments.
+
 Strategic decisions:
 
 - macOS first.
@@ -19,6 +27,8 @@ Strategic decisions:
 - Keep local Pythia execution and local SQLite persistence.
 - Treat generated code, logs, plots, run metadata, replayability, and export as
   product surface.
+- Treat the reviewer, Run Quality analyzer, reference packs, and future
+  HEPData/Rivet comparisons as the core company wedge.
 
 ## Current Baseline
 
@@ -439,82 +449,89 @@ Reference-Grounded Physics Reviewer v2:
 
 ## Next Product Slice
 
-Analysis Plan Editor v1.
+HEP Correctness Benchmark Harness v0.
 
-Why this next: Vidura can now create reproducible runs and review them against
-artifacts and references after execution. The remaining trust gap is before
-execution: users cannot inspect or correct the generated physics plan before
-codegen and Pythia run. The app should become a workbench, not a black-box
-prompt-to-run pipeline.
+Why this next: the fastest way to move away from the "OpenAI wrapper" critique
+is to prove Vidura catches physics mistakes that general AI workflows miss. The
+app already has evidence artifacts, deterministic Run Quality, HEP references,
+and a reference-grounded reviewer. Now those pieces need to become a measurable
+benchmark and report.
 
-This should stay small: a compact pre-run plan review/editor for
-`SimulationSpec` and `AnalysisPlan` that lets the user accept, edit, or cancel
-before codegen. Do not redesign the whole thread UI and do not add a schema
-migration unless there is a hard reason.
+This should stay small and offline: fixture-backed benchmark tasks, a local
+runner, deterministic scoring, and JSON/Markdown reports. Do not depend on live
+OpenAI calls or live network calls for v0.
 
 Recommended scope:
 
-- after guide/intent/planning produces a `SimulationSpec`, pause before codegen
-  and surface the plan for review;
-- show editable fields for event count, seed, process settings, cuts,
-  observables/output files, and the analysis family/assumptions;
-- support Accept Run, Edit & Run, and Cancel;
-- persist the accepted or edited spec through the existing evidence path as
-  `simulation_spec.json`;
-- record whether the plan was user-edited in run configuration or evidence
-  metadata without a schema migration if possible;
-- reuse parameterized-rerun editing helpers where they fit, but this must work
-  for first-run execution, not only variants;
-- add deterministic validation for plan edits before codegen: positive event
-  count, valid seed, non-empty observables, safe process/cut settings, and no
-  duplicate output filenames;
-- keep Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run
-  Quality, Physics Reviewer, HEP References, Refresh References, and the
-  regression harness working.
+- add a benchmark task fixture format for correctness cases;
+- create an initial suite of 10-15 fixture tasks covering:
+  - low statistics;
+  - missing/empty artifacts;
+  - event-count mismatch;
+  - histogram overflow;
+  - hard-process or pT-hat cuts described as inclusive/minimum-bias;
+  - unsupported external-measurement/literature claims;
+  - missing citations;
+  - invented or irrelevant reference IDs;
+  - figure/summary mismatch;
+  - unit or observable ambiguity;
+- implement a local benchmark runner script, likely
+  `./script/hep_correctness_benchmark.sh`;
+- keep the benchmark harness deterministic and offline: no live model calls and
+  no live source/network calls;
+- score findings against expected severity, category, evidence references, and
+  reference IDs;
+- emit both JSON and Markdown reports under an ignored/generated output
+  directory;
+- include competitor-output fixture slots so later head-to-head reports can
+  compare Vidura with general AI outputs without making v0 depend on live model
+  calls;
+- add or reuse pure helpers from `RunQualityAnalyzer`, `PhysicsReviewerAgent`,
+  and `HEPReferences.swift` instead of duplicating logic.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
   Run Quality, Physics Reviewer, and regression harness behavior remains intact;
-- a newly planned run can be accepted unchanged and proceeds to existing
-  codegen/runner behavior;
-- edited event count, seed, process/cut settings, and output files affect the
-  persisted `simulation_spec.json` and generated `run.cc`;
-- canceling a plan leaves a clear non-running state and does not create a
-  misleading completed run;
-- malformed edits are blocked with compact validation messages before codegen;
-- no existing rerun/export/reviewer/reference path regresses;
+- the benchmark runner can execute locally without network or OpenAI;
+- benchmark tasks encode expected reviewer/quality findings;
+- the runner reports pass/fail plus category/severity/evidence/reference-ID
+  scoring;
+- generated reports are not committed by default;
+- the existing reproducibility regression harness still passes;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Start with the smallest interruption point in `OrchestratorService`: after
-`AnalysisPlannerAgent` produces a `SimulationSpec`, before code generation and
-execution. The UI can be a compact pending-plan surface in the existing thread
-detail view.
+Start outside the app UI. This is a benchmark harness and corpus, not a new
+screen. The harness should exercise the pure analyzer/reviewer paths with
+fixtures so it can later become a public benchmark and head-to-head report.
 
 Suggested shape:
 
-- Add a small pending-plan model/state rather than a new persistence table.
-- Keep the editor dense and operational; avoid a wizard or marketing-style
-  screen.
-- Prefer plain SwiftUI controls: steppers/text fields for numeric values,
-  editable lists for settings/output files, and clear Accept/Edit/Cancel
-  actions.
-- Keep validation pure and fixture-tested.
-- When an edited plan runs, downstream codegen, evidence persistence, references,
-  quality, reviewer, compare, and export should see the edited spec as the
-  source of truth.
+- Add a small benchmark directory, for example `benchmarks/hep_correctness/`,
+  with fixture JSON and a checked-in README.
+- Add `script/hep_correctness_benchmark.sh` and Swift or Python runner code
+  under `script/hep_correctness_benchmark/`.
+- Prefer Swift if reusing app structs is straightforward; use Python only for
+  report aggregation if it avoids brittle Swift harness plumbing.
+- Keep fixture artifacts small and synthetic; do not commit generated simulation
+  folders or large binary outputs.
+- Include a clear schema for task metadata, expected findings, and optional
+  competitor outputs.
+- The first benchmark should prove harness shape, not full physics breadth.
 
 ## Acceptance Criteria
 
-- First-run execution can pause for plan review, then proceed after Accept Run.
-- Edit & Run modifies the actual `SimulationSpec` used by codegen and evidence.
-- Cancel stops the pending execution cleanly.
-- Invalid plan edits are blocked before codegen.
-- Existing Physics Reviewer, Run Quality, HEP Reference, lineage, rerun, compare,
-  export, and refresh harness cases still pass.
+- `./script/hep_correctness_benchmark.sh` runs offline and exits nonzero on
+  failed benchmark expectations.
+- The benchmark emits `report.json` and `report.md` into an ignored output path.
+- At least 10 initial HEP correctness fixtures are included.
+- Findings are scored by expected category, severity, evidence, and reference
+  IDs where applicable.
+- Existing Physics Reviewer, Run Quality, HEP Reference, lineage, rerun,
+  compare, export, and refresh harness cases still pass.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - `./script/reproducibility_regression.sh` succeeds.

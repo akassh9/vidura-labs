@@ -9,8 +9,12 @@ local Pythia 8 workflow that generates C++ code, compiles and executes it,
 parses artifacts, and renders summary text plus charts in the chat UI.
 
 The long-term direction is a physics-specific research assistant, starting with
-HEP and Pythia. macOS is the primary platform. The old CLI and
-sponsored-provider hackathon direction is no longer the active baseline.
+HEP and Pythia. The strategic wedge is correctness verification for
+computational HEP, not model generation. Writing plausible Pythia code is
+commodity model behavior; Vidura should prove whether a physics claim, plot, or
+run is correct against artifacts, references, and eventually public data.
+macOS is the primary starting platform. The old CLI and sponsored-provider
+hackathon direction is no longer the active baseline.
 
 ## Architecture
 
@@ -66,6 +70,10 @@ Evidence using bounded arXiv, INSPIRE, HEPData, and PDG retrieval. Refreshed
 packs store per-source statuses in `source_statuses` and exports serialize the
 persisted pack without live network calls.
 
+The near-term company proof is an offline HEP correctness benchmark: fixture
+tasks with expected reviewer/quality findings, scoring, and reports that show
+whether Vidura catches errors a general AI workflow would miss.
+
 ## Runtime Pipeline
 
 1. `AppBootstrapView` checks command line tools, installs bundled Pythia into
@@ -117,13 +125,19 @@ from Codex.
 
 ## Near-Term Cleanup Priorities
 
-1. Add Analysis Plan Editor v1 so users can review, edit, accept, or cancel the
+1. Add HEP Correctness Benchmark Harness v0 with fixture tasks, scoring, and
+   offline JSON/Markdown reports.
+2. Produce a public-style benchmark report comparing Vidura's reviewer against
+   general AI output fixtures.
+3. Add HEPData/Rivet/YODA comparison paths for published-measurement
+   reproduction.
+4. Add Analysis Plan Editor v1 so users can review, edit, accept, or cancel the
    generated `SimulationSpec` before codegen and Pythia execution.
-2. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
+5. Remove the duplicate `pythia_dist 2` folder and confirm the release bundle
    still includes the expected `pythia_dist` resource.
-3. Fix `moveThreadToProject` so it preserves runs/messages instead of
+6. Fix `moveThreadToProject` so it preserves runs/messages instead of
    delete/recreate semantics.
-4. Decide where the line should sit between OpenAI-driven codegen and the
+7. Decide where the line should sit between OpenAI-driven codegen and the
    deterministic `CodegenAgent` fallback.
-5. Promote the script regression harness into a formal test target once the
+8. Promote the script regression harness into a formal test target once the
    Xcode project structure can absorb that without churn.

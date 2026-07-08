@@ -22,9 +22,20 @@ the same product pattern for physics, starting with HEP and Pythia:
 - reviewer agents that check calculations, citations, figures, and provenance;
 - reusable lab workflows that become durable skills.
 
-The core promise is not "chat with a model." It is:
+The strategic wedge is correctness, not generation. Pythia code generation is a
+commodity model capability. Vidura's defensible position is the verified side of
+the loop: catching physics mistakes, proving claims against artifacts, and
+eventually checking generated results against HEPData, Rivet, PDG values, and
+published measurements.
+
+The core promise is not "chat with a model" or "AI writes physics code." It is:
 
 > Ask a physics question, get a reproducible scientific work product.
+
+The moat should become:
+
+> A growing benchmark and corpus of verified computational-HEP runs, failures,
+> corrections, and reviewer judgments that general AI tools do not have.
 
 ## Product Pillars
 
@@ -58,6 +69,25 @@ Required artifact contract:
 - plots/tables and the code that created them;
 - quality checks and reviewer notes;
 - full lineage for exact reruns, variants, forks, exports, and citations.
+
+### 2.5. Verified Correctness, Not Model Wrapping
+
+The wrapper critique is valid if Vidura competes on generation alone. The
+product should instead compete on verification in a domain with ground truth.
+
+Near-term correctness assets:
+
+- HEP correctness benchmark tasks with expected findings and traceable ground
+  truth;
+- head-to-head reviewer scorecards against general AI outputs;
+- run artifacts that prove a claim or expose why a claim is wrong;
+- public-data comparison paths through HEPData/Rivet/YODA where feasible;
+- a proprietary corpus of verified specs, code, outputs, reviewer findings, and
+  corrections from real users.
+
+Success means Vidura catches physics errors that a general copilot ships
+silently: wrong units, weak statistics, biased cuts, unsupported agreement
+claims, invented citations, mismatched figures, and untraceable numbers.
 
 ### 3. Domain-Ready HEP Toolchain
 
@@ -167,10 +197,12 @@ Completed:
   reference ID chips in reviewer findings, and export preservation of reviewer
   reference IDs.
 
-This is a strong Phase 0/1 foundation. It is still far from the workbench
-benchmark because users cannot yet inspect and edit planned physics assumptions
-before execution, and it still lacks managed compute, native physics artifact
-viewers, richer review workflows, and publication workflows.
+This is a strong Phase 0/1 foundation. It is also enough to start testing the
+real wedge: whether Vidura can catch HEP correctness failures better than a
+general-purpose model workflow. It is still far from the full workbench because
+it lacks public benchmark proof, HEPData/Rivet comparison, managed compute,
+native physics artifact viewers, richer review workflows, and publication
+workflows.
 
 ## Execution Principles
 
@@ -180,6 +212,11 @@ viewers, richer review workflows, and publication workflows.
 - Every visible scientific claim should have evidence.
 - Every generated artifact should carry provenance.
 - Deterministic checks and fixtures should protect core physics contracts.
+- Benchmarkable correctness beats feature breadth.
+- Treat the reviewer and quality analyzers as the company seed, not a side
+  feature.
+- Model providers should remain swappable; the durable asset is validated
+  physics evidence and correction data.
 - OpenAI calls should be structured where possible, with deterministic fallbacks
   for supported workflows.
 - Do not add physics breadth before the run record and reviewer loop are
@@ -227,11 +264,11 @@ Remaining:
 
 - make run bundles more portable as cited artifacts.
 
-### Phase 2: Add The Physics Reviewer Loop
+### Phase 2: Prove The Correctness Loop
 
-Goal: completed analyses are trustworthy enough for exploratory physics work.
+Goal: show that Vidura catches real HEP mistakes that general AI workflows miss.
 
-Status: mostly complete for the first Pythia workbench loop.
+Status: reviewer foundation complete; public benchmark proof not started.
 
 Completed:
 
@@ -259,14 +296,18 @@ Completed:
 
 Needed:
 
+- HEP Correctness Benchmark v0 with fixture tasks, expected findings, scoring,
+  and report output;
+- head-to-head evaluation artifacts for Vidura reviewer versus general model
+  outputs on the same tasks;
 - fresh smoke runs that exercise persisted reference-grounded reviewer artifacts
   end to end;
 - reviewer checks that compare generated distributions to actual public data
   once HEPData comparison is available.
 
-The next trust gap is now upstream of execution. Vidura can review completed
-runs, but users still need to inspect and edit the generated physics plan before
-spending time on a simulation.
+The next trust gap is external proof. The codebase has a promising reviewer
+loop; now Vidura needs a benchmark that demonstrates whether this correctness
+edge is real.
 
 ### Phase 3: Become Domain-Ready For HEP
 
@@ -301,6 +342,7 @@ Needed:
 
 - connectors for CERN Open Data, LHAPDF, and relevant experiment public
   repositories;
+- Rivet/YODA and HEPData comparison paths for benchmark-grade validation;
 - analysis templates for common Pythia/Rivet/ROOT tasks;
 - import/export for common formats: ROOT, HepMC, LHE, YODA, CSV/Parquet,
   JSON summaries, LaTeX snippets;
@@ -367,48 +409,44 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-Analysis Plan Editor v1.
+HEP Correctness Benchmark Harness v0.
 
-Why: Vidura should not be a black-box run button. The workbench now produces
-auditable runs and reviewer findings after execution, but users still cannot
-inspect and adjust the generated physics assumptions before execution. The next
-step is a compact pre-run review surface for the deterministic `SimulationSpec`
-and `AnalysisPlan` so a user can accept, edit, or cancel before Pythia work
-starts.
+Why: the highest-leverage way to shed the OpenAI-wrapper image is to publish
+evidence that Vidura catches physics mistakes general AI workflows miss. The
+app already has run evidence, deterministic quality checks, reference packs,
+and a reference-grounded reviewer. The next step is an offline benchmark harness
+that turns those capabilities into a measurable correctness claim.
 
 Scope:
 
-- add a pre-execution Analysis Plan review state after intent/planning and
-  before codegen/runner;
-- surface the generated plan in the existing thread UI with editable fields for
-  event count, seed, process settings, cuts, observables/output files, and
-  analysis-family assumptions;
-- support Accept Run, Edit & Run, and Cancel without introducing a schema
-  migration;
-- persist the accepted/edited plan into the existing run evidence path as
-  `simulation_spec.json` and record whether the plan was user-edited in run
-  configuration or evidence metadata;
-- reuse existing parameterized-rerun editing helpers where they fit, but do not
-  collapse this into rerun-only behavior;
-- add deterministic validation for edits before codegen so malformed cuts,
-  empty observables, invalid event counts, and duplicate output files do not
-  reach the runner;
-- keep exact rerun, parameterized rerun, export, reviewer, reference refresh,
-  and the regression harness behavior intact;
-- add fixture-driven regression coverage for plan edit validation and spec
-  serialization.
+- define a fixture-backed benchmark task format for HEP correctness cases;
+- create an initial task suite covering low statistics, missing artifacts,
+  event-count mismatch, overflow, biased cuts, misleading process wording,
+  unsupported external-measurement claims, missing citations, invented
+  references, figure/summary mismatch, and unit/observable ambiguity;
+- add a local benchmark runner script that executes without live OpenAI or live
+  network calls;
+- score Vidura deterministic/reviewer findings against expected findings:
+  severity, category, evidence references, and reference IDs;
+- emit machine-readable JSON and human-readable Markdown reports;
+- include baseline competitor-output fixtures so later head-to-head reports can
+  compare Vidura against general AI outputs without depending on live model
+  calls in the harness;
+- keep the existing app validation and reproducibility harness intact.
 
 ## Next 8 Product Slices
 
-1. Analysis Plan Editor so users can review/edit assumptions before execution.
-2. Native physics artifact viewer upgrades: richer histograms, tables, and
+1. HEP Correctness Benchmark Harness v0.
+2. Public benchmark report v0: Vidura reviewer versus general AI output
+   fixtures.
+3. HEPData/Rivet/YODA comparison path for benchmark-grade published-measurement
+   reproduction.
+4. Analysis Plan Editor so users can review/edit assumptions before execution.
+5. Linux/SSH execution lane with environment capture for real HEP stacks.
+6. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
-3. Reusable HEP analysis templates and skills.
-4. Public-data comparison v1 against HEPData where compatible observables exist.
-5. Local compute session model with environment capture, preparing for SSH/HPC.
-6. Portable cited run bundles with stronger manifest/environment capture.
-7. Publication/analysis-note export with reviewer-gated claims.
-8. Formalize the script regression harness into an Xcode test target.
+7. Reusable HEP analysis templates and skills.
+8. Portable cited run bundles with stronger manifest/environment capture.
 
 ## Non-Goals
 

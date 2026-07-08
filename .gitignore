@@ -22,6 +22,7 @@ GoogleService-Info.plist
 # Local app/runtime artifacts
 dist/
 *.log
+benchmark-results/
 
 # Duplicate local vendor tree; the project references pythia_dist.
 pythia_dist 2/
