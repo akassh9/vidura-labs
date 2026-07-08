@@ -84,6 +84,7 @@ struct HEPReferencePack: Codable, Equatable, Sendable {
     let query: String
     let references: [HEPReference]
     let tags: [String]
+    let sourceStatuses: [HEPReferenceSourceStatus]
 
     enum CodingKeys: String, CodingKey {
         case formatVersion = "format_version"
@@ -91,6 +92,76 @@ struct HEPReferencePack: Codable, Equatable, Sendable {
         case query
         case references
         case tags
+        case sourceStatuses = "source_statuses"
+    }
+
+    nonisolated init(
+        formatVersion: Int,
+        generatedAt: String,
+        query: String,
+        references: [HEPReference],
+        tags: [String],
+        sourceStatuses: [HEPReferenceSourceStatus] = []
+    ) {
+        self.formatVersion = formatVersion
+        self.generatedAt = generatedAt
+        self.query = query
+        self.references = references
+        self.tags = tags
+        self.sourceStatuses = sourceStatuses
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.formatVersion = try container.decode(Int.self, forKey: .formatVersion)
+        self.generatedAt = try container.decode(String.self, forKey: .generatedAt)
+        self.query = try container.decode(String.self, forKey: .query)
+        self.references = try container.decode([HEPReference].self, forKey: .references)
+        self.tags = try container.decode([String].self, forKey: .tags)
+        self.sourceStatuses = try container.decodeIfPresent([HEPReferenceSourceStatus].self, forKey: .sourceStatuses) ?? []
+    }
+}
+
+enum HEPReferenceRetrievalState: String, Codable, Equatable, Sendable {
+    case success
+    case partialFailure = "partial_failure"
+    case failed
+    case skipped
+}
+
+struct HEPReferenceSourceStatus: Codable, Equatable, Sendable, Identifiable {
+    var id: String { source.rawValue }
+
+    let source: HEPReferenceSource
+    let state: HEPReferenceRetrievalState
+    let query: String
+    let resultCount: Int
+    let message: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case state
+        case query
+        case resultCount = "result_count"
+        case message
+        case updatedAt = "updated_at"
+    }
+
+    nonisolated init(
+        source: HEPReferenceSource,
+        state: HEPReferenceRetrievalState,
+        query: String,
+        resultCount: Int,
+        message: String? = nil,
+        updatedAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.source = source
+        self.state = state
+        self.query = query
+        self.resultCount = resultCount
+        self.message = message
+        self.updatedAt = updatedAt
     }
 }
 
@@ -255,18 +326,22 @@ enum HEPReferencePackAssembler {
     nonisolated static func assemble(
         query: String,
         references: [HEPReference],
-        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        additionalTags: [String] = [],
+        sourceStatuses: [HEPReferenceSourceStatus] = []
     ) -> HEPReferencePack {
         let normalized = HEPReferenceNormalizer.dedupe(references)
-        let tags = normalized.reduce(into: Set<String>()) { result, reference in
+        var tags = normalized.reduce(into: Set<String>()) { result, reference in
             reference.tags.forEach { result.insert($0) }
         }
+        additionalTags.forEach { tags.insert($0) }
         return HEPReferencePack(
             formatVersion: 1,
             generatedAt: generatedAt,
             query: query,
             references: normalized,
-            tags: tags.sorted()
+            tags: tags.sorted(),
+            sourceStatuses: sourceStatuses
         )
     }
 
@@ -549,6 +624,413 @@ enum PDGConnector {
             url: string(record["url"]) ?? canonicalURL().absoluteString,
             tags: ["pdg", "particle-data"] + identifierTags + flattenedStrings(record["tags"])
         )
+    }
+}
+
+struct HEPReferenceQueryContext: Sendable {
+    let runTitle: String
+    let prompt: String
+    let simulationSpec: SimulationSpec?
+    let chartTitles: [String]
+
+    nonisolated init(
+        runTitle: String,
+        prompt: String,
+        simulationSpec: SimulationSpec?,
+        chartTitles: [String]
+    ) {
+        self.runTitle = runTitle
+        self.prompt = prompt
+        self.simulationSpec = simulationSpec
+        self.chartTitles = chartTitles
+    }
+}
+
+struct HEPReferenceQueryPlan: Equatable, Sendable {
+    let displayQuery: String
+    let arxivQuery: String
+    let inspireQuery: String
+    let hepdataInspireIds: [String]
+    let pdgTopic: String
+    let tags: [String]
+}
+
+struct HEPReferenceRetrievalLimits: Sendable {
+    let maxArxivResults: Int
+    let maxInspireResults: Int
+    let maxHEPDataRecords: Int
+    let maxReferencesPerSource: Int
+
+    nonisolated init(
+        maxArxivResults: Int = 5,
+        maxInspireResults: Int = 5,
+        maxHEPDataRecords: Int = 3,
+        maxReferencesPerSource: Int = 6
+    ) {
+        self.maxArxivResults = max(0, maxArxivResults)
+        self.maxInspireResults = max(0, maxInspireResults)
+        self.maxHEPDataRecords = max(0, maxHEPDataRecords)
+        self.maxReferencesPerSource = max(0, maxReferencesPerSource)
+    }
+}
+
+enum HEPReferenceRetrievalError: LocalizedError {
+    case httpStatus(Int, URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .httpStatus(let status, let url):
+            return "HTTP \(status) from \(url.host ?? url.absoluteString)"
+        }
+    }
+}
+
+typealias HEPReferenceDataFetcher = @Sendable (HEPReferenceSource, URL) async throws -> Data
+
+enum HEPReferenceRetriever {
+    nonisolated static func queryPlan(context: HEPReferenceQueryContext, existingPack: HEPReferencePack? = nil) -> HEPReferenceQueryPlan {
+        var tags = ["hep", "pythia", "simulation"]
+        var phrases = ["Pythia 8"]
+
+        let titleTerms = compactPhrase(context.runTitle)
+        if !titleTerms.isEmpty {
+            phrases.append(titleTerms)
+        }
+
+        if let family = context.simulationSpec?.analysisPlan?.family {
+            tags.append(family)
+            phrases.append(familyPhrase(family))
+        }
+
+        for process in context.simulationSpec?.processSettings ?? [] {
+            let processPhrase = phrase(forProcessSetting: process)
+            if !processPhrase.isEmpty {
+                phrases.append(processPhrase)
+            }
+        }
+
+        for cut in context.simulationSpec?.cutsSettings ?? [] where cut.lowercased().contains("pthat") {
+            phrases.append("transverse momentum")
+            tags.append("pt")
+        }
+
+        for observable in context.simulationSpec?.observables ?? [] {
+            let observablePhrase = compactPhrase(observable.id.replacingOccurrences(of: "_", with: " "))
+            if !observablePhrase.isEmpty {
+                phrases.append(observablePhrase)
+            }
+        }
+
+        for chartTitle in context.chartTitles.prefix(3) {
+            let chartPhrase = compactPhrase(chartTitle)
+            if !chartPhrase.isEmpty {
+                phrases.append(chartPhrase)
+            }
+        }
+
+        for promptPhrase in promptPhrases(context.prompt) {
+            phrases.append(promptPhrase)
+        }
+
+        let displayPhrases = uniqueStrings(phrases)
+            .filter { !$0.isEmpty }
+            .prefix(8)
+        let displayQuery = displayPhrases.joined(separator: " ")
+        let inspireQuery = displayQuery.isEmpty ? "Pythia 8 high energy physics" : displayQuery
+        let arxivTerms = Array(displayPhrases.prefix(5))
+        let arxivQuery = arxivTerms.isEmpty
+            ? #"all:"Pythia 8""#
+            : arxivTerms.map { #"all:"\#($0)""# }.joined(separator: " AND ")
+        let pdgTopic = pdgTopicPhrase(context.simulationSpec?.analysisPlan?.family, fallback: displayQuery)
+        let existingInspireIds = existingPack?.references.compactMap(\.inspireId) ?? []
+
+        return HEPReferenceQueryPlan(
+            displayQuery: displayQuery.isEmpty ? "Pythia 8 high energy physics" : displayQuery,
+            arxivQuery: arxivQuery,
+            inspireQuery: inspireQuery,
+            hepdataInspireIds: uniqueStrings(existingInspireIds),
+            pdgTopic: pdgTopic,
+            tags: uniqueStrings(tags.map { $0.lowercased() })
+        )
+    }
+
+    nonisolated static func refresh(
+        existingPack: HEPReferencePack?,
+        context: HEPReferenceQueryContext,
+        limits: HEPReferenceRetrievalLimits = HEPReferenceRetrievalLimits(),
+        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+    ) async -> HEPReferencePack {
+        await refresh(
+            existingPack: existingPack,
+            context: context,
+            limits: limits,
+            generatedAt: generatedAt,
+            fetcher: { source, url in
+                try await defaultFetcher(source: source, url: url)
+            }
+        )
+    }
+
+    nonisolated static func refresh(
+        existingPack: HEPReferencePack?,
+        context: HEPReferenceQueryContext,
+        limits: HEPReferenceRetrievalLimits = HEPReferenceRetrievalLimits(),
+        generatedAt: String = ISO8601DateFormatter().string(from: Date()),
+        fetcher: @escaping HEPReferenceDataFetcher
+    ) async -> HEPReferencePack {
+        let plan = queryPlan(context: context, existingPack: existingPack)
+        var references = existingPack?.references ?? []
+        var statuses: [HEPReferenceSourceStatus] = []
+        let existingTags = existingPack?.tags ?? []
+
+        if limits.maxArxivResults > 0 {
+            let url = ArxivConnector.searchURL(query: plan.arxivQuery, maxResults: limits.maxArxivResults)
+            do {
+                let data = try await fetcher(.arxiv, url)
+                let parsed = Array(try ArxivConnector.parse(data: data).prefix(limits.maxReferencesPerSource))
+                references.append(contentsOf: parsed)
+                statuses.append(status(
+                    source: .arxiv,
+                    state: .success,
+                    query: plan.arxivQuery,
+                    resultCount: parsed.count,
+                    generatedAt: generatedAt
+                ))
+            } catch {
+                statuses.append(status(
+                    source: .arxiv,
+                    state: .failed,
+                    query: plan.arxivQuery,
+                    resultCount: 0,
+                    message: error.localizedDescription,
+                    generatedAt: generatedAt
+                ))
+            }
+        } else {
+            statuses.append(status(source: .arxiv, state: .skipped, query: plan.arxivQuery, resultCount: 0, message: "arXiv result limit is 0.", generatedAt: generatedAt))
+        }
+
+        var inspireReferences: [HEPReference] = []
+        if limits.maxInspireResults > 0 {
+            let url = InspireConnector.searchURL(query: plan.inspireQuery, size: limits.maxInspireResults)
+            do {
+                let data = try await fetcher(.inspire, url)
+                inspireReferences = Array(try InspireConnector.parse(data: data).prefix(limits.maxReferencesPerSource))
+                references.append(contentsOf: inspireReferences)
+                statuses.append(status(
+                    source: .inspire,
+                    state: .success,
+                    query: plan.inspireQuery,
+                    resultCount: inspireReferences.count,
+                    generatedAt: generatedAt
+                ))
+            } catch {
+                statuses.append(status(
+                    source: .inspire,
+                    state: .failed,
+                    query: plan.inspireQuery,
+                    resultCount: 0,
+                    message: error.localizedDescription,
+                    generatedAt: generatedAt
+                ))
+            }
+        } else {
+            statuses.append(status(source: .inspire, state: .skipped, query: plan.inspireQuery, resultCount: 0, message: "INSPIRE result limit is 0.", generatedAt: generatedAt))
+        }
+
+        let hepdataIDs = uniqueStrings(
+            plan.hepdataInspireIds + inspireReferences.compactMap(\.inspireId) + references.compactMap(\.inspireId)
+        )
+        let hepdataResult = await fetchHEPData(
+            inspireIds: Array(hepdataIDs.prefix(limits.maxHEPDataRecords)),
+            limits: limits,
+            generatedAt: generatedAt,
+            fetcher: fetcher
+        )
+        references.append(contentsOf: hepdataResult.references)
+        statuses.append(hepdataResult.status)
+
+        let pdgReference = PDGConnector.reference(for: plan.pdgTopic)
+        references.append(pdgReference)
+        statuses.append(status(
+            source: .pdg,
+            state: .success,
+            query: plan.pdgTopic,
+            resultCount: 1,
+            message: "Canonical PDG entry added locally.",
+            generatedAt: generatedAt
+        ))
+
+        return HEPReferencePackAssembler.assemble(
+            query: plan.displayQuery,
+            references: references,
+            generatedAt: generatedAt,
+            additionalTags: existingTags + plan.tags,
+            sourceStatuses: statuses
+        )
+    }
+
+    private nonisolated static func defaultFetcher(source: HEPReferenceSource, url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue("Vidura Labs HEP reference refresh", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw HEPReferenceRetrievalError.httpStatus(http.statusCode, url)
+        }
+        return data
+    }
+
+    private nonisolated static func fetchHEPData(
+        inspireIds: [String],
+        limits: HEPReferenceRetrievalLimits,
+        generatedAt: String,
+        fetcher: @escaping HEPReferenceDataFetcher
+    ) async -> (status: HEPReferenceSourceStatus, references: [HEPReference]) {
+        guard limits.maxHEPDataRecords > 0 else {
+            return (status(source: .hepdata, state: .skipped, query: "", resultCount: 0, message: "HEPData record limit is 0.", generatedAt: generatedAt), [])
+        }
+        guard !inspireIds.isEmpty else {
+            return (status(source: .hepdata, state: .skipped, query: "", resultCount: 0, message: "No INSPIRE IDs available for HEPData lookup.", generatedAt: generatedAt), [])
+        }
+
+        var parsed: [HEPReference] = []
+        var failures: [String] = []
+        for inspireId in inspireIds {
+            let url = HEPDataConnector.recordURL(inspireId: inspireId)
+            do {
+                let data = try await fetcher(.hepdata, url)
+                parsed.append(contentsOf: try HEPDataConnector.parse(data: data))
+            } catch {
+                failures.append("\(inspireId): \(error.localizedDescription)")
+            }
+        }
+
+        let bounded = Array(parsed.prefix(limits.maxReferencesPerSource))
+        let state: HEPReferenceRetrievalState
+        if failures.isEmpty {
+            state = .success
+        } else if !bounded.isEmpty {
+            state = .partialFailure
+        } else {
+            state = .failed
+        }
+        let message = failures.isEmpty ? nil : failures.prefix(2).joined(separator: "; ")
+        let sourceStatus = status(
+            source: .hepdata,
+            state: state,
+            query: inspireIds.joined(separator: ","),
+            resultCount: bounded.count,
+            message: message,
+            generatedAt: generatedAt
+        )
+        return (sourceStatus, bounded)
+    }
+
+    private nonisolated static func status(
+        source: HEPReferenceSource,
+        state: HEPReferenceRetrievalState,
+        query: String,
+        resultCount: Int,
+        message: String? = nil,
+        generatedAt: String
+    ) -> HEPReferenceSourceStatus {
+        HEPReferenceSourceStatus(
+            source: source,
+            state: state,
+            query: query,
+            resultCount: resultCount,
+            message: message,
+            updatedAt: generatedAt
+        )
+    }
+
+    private nonisolated static func familyPhrase(_ family: String) -> String {
+        switch family {
+        case AnalysisFamily.chargedMultiplicity.rawValue:
+            return "charged particle multiplicity"
+        case AnalysisFamily.ptSpectrum.rawValue:
+            return "transverse momentum spectrum"
+        case AnalysisFamily.etaRapidity.rawValue:
+            return "pseudorapidity rapidity distribution"
+        case AnalysisFamily.invariantMass.rawValue:
+            return "invariant mass spectrum"
+        case AnalysisFamily.pidYields.rawValue:
+            return "particle yields"
+        case AnalysisFamily.eventScalars.rawValue:
+            return "event scalar observables"
+        default:
+            return compactPhrase(family.replacingOccurrences(of: "_", with: " "))
+        }
+    }
+
+    private nonisolated static func phrase(forProcessSetting setting: String) -> String {
+        let lower = setting.lowercased()
+        if lower.contains("hardqcd") {
+            return "QCD jets"
+        }
+        if lower.contains("softqcd") {
+            return "minimum bias proton proton"
+        }
+        if lower.contains("weak") {
+            return "weak boson production"
+        }
+        if lower.contains("higgs") {
+            return "Higgs production"
+        }
+        return compactPhrase(setting.components(separatedBy: "=").first ?? setting)
+    }
+
+    private nonisolated static func pdgTopicPhrase(_ family: String?, fallback: String) -> String {
+        guard let family else {
+            return fallback.isEmpty ? "high energy physics" : fallback
+        }
+        switch family {
+        case AnalysisFamily.pidYields.rawValue:
+            return "particle properties and particle identification"
+        case AnalysisFamily.invariantMass.rawValue:
+            return "resonance properties and branching fractions"
+        case AnalysisFamily.ptSpectrum.rawValue:
+            return "kinematics and transverse momentum"
+        default:
+            return "particle properties and high energy physics review"
+        }
+    }
+
+    private nonisolated static func promptPhrases(_ prompt: String) -> [String] {
+        let lower = prompt.lowercased()
+        var phrases: [String] = []
+        if lower.contains("charged multiplicity") || lower.contains("multiplicity") {
+            phrases.append("charged particle multiplicity")
+        }
+        if lower.contains("pt") || lower.contains("p_t") || lower.contains("transverse momentum") {
+            phrases.append("transverse momentum")
+        }
+        if lower.contains("minimum bias") {
+            phrases.append("minimum bias")
+        }
+        if lower.contains("qcd") || lower.contains("jet") {
+            phrases.append("QCD jets")
+        }
+        return phrases
+    }
+
+    private nonisolated static func compactPhrase(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .prefix(8)
+            .joined(separator: " ")
+    }
+
+    private nonisolated static func uniqueStrings(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { value in
+            let key = value.lowercased()
+            return !key.isEmpty && seen.insert(key).inserted
+        }
     }
 }
 

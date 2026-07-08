@@ -2065,6 +2065,9 @@ private struct RunEvidenceCard: View {
     @State private var isExporting = false
     @State private var exportResult: RunBundleExportResult?
     @State private var exportError: String?
+    @State private var isRefreshingReferences = false
+    @State private var refreshedReferencePack: HEPReferencePack?
+    @State private var referenceRefreshError: String?
 
     private var artifacts: [ArtifactRef] {
         RunEvidenceResolver.artifacts(for: run)
@@ -2093,7 +2096,7 @@ private struct RunEvidenceCard: View {
     }
 
     private var referencePack: HEPReferencePack? {
-        HEPReferencePackAdapter.pack(in: artifacts)
+        refreshedReferencePack ?? HEPReferencePackAdapter.pack(in: artifacts)
     }
 
     var body: some View {
@@ -2181,6 +2184,22 @@ private struct RunEvidenceCard: View {
                 .controlSize(.small)
                 .disabled(!canExportRunBundle)
                 .help("Export Run Bundle")
+
+                Button {
+                    refreshReferences()
+                } label: {
+                    if isRefreshingReferences {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "books.vertical")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(!canRefreshReferences)
+                .help("Refresh References")
 
                 if lineage.isDerived {
                     Button {
@@ -2344,6 +2363,17 @@ private struct RunEvidenceCard: View {
         } message: {
             Text(exportError ?? "")
         }
+        .alert(
+            "Reference Refresh Failed",
+            isPresented: Binding(
+                get: { referenceRefreshError != nil },
+                set: { if !$0 { referenceRefreshError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { referenceRefreshError = nil }
+        } message: {
+            Text(referenceRefreshError ?? "")
+        }
     }
 
     private var canRerunExact: Bool {
@@ -2356,6 +2386,10 @@ private struct RunEvidenceCard: View {
 
     private var canExportRunBundle: Bool {
         run.status == .completed && !isExporting && !artifacts.isEmpty
+    }
+
+    private var canRefreshReferences: Bool {
+        run.status == .completed && !isRefreshingReferences && !orchestrator.isRunning
     }
 
     private var canCompareToSource: Bool {
@@ -2456,6 +2490,25 @@ private struct RunEvidenceCard: View {
                 exportError = error.localizedDescription
             }
             isExporting = false
+        }
+    }
+
+    private func refreshReferences() {
+        guard canRefreshReferences else { return }
+        isRefreshingReferences = true
+        referenceRefreshError = nil
+
+        Task {
+            do {
+                refreshedReferencePack = try await orchestrator.refreshReferences(
+                    run: run,
+                    chartPayloads: chartPayloads,
+                    messages: messages
+                )
+            } catch {
+                referenceRefreshError = error.localizedDescription
+            }
+            isRefreshingReferences = false
         }
     }
 }
@@ -2946,6 +2999,15 @@ private struct HEPReferencesBlock: View {
                 MetricChip(label: "Refs", value: "\(pack.references.count)")
             }
 
+            if !pack.sourceStatuses.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(pack.sourceStatuses) { status in
+                        HEPReferenceSourceStatusChip(status: status)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
             VStack(spacing: 3) {
                 ForEach(visibleReferences) { reference in
                     HEPReferenceRow(reference: reference)
@@ -2960,6 +3022,65 @@ private struct HEPReferencesBlock: View {
                 }
             }
         }
+    }
+}
+
+private struct HEPReferenceSourceStatusChip: View {
+    let status: HEPReferenceSourceStatus
+
+    private var color: Color {
+        switch status.state {
+        case .success:
+            return .green
+        case .partialFailure:
+            return .orange
+        case .failed:
+            return .red
+        case .skipped:
+            return .secondary
+        }
+    }
+
+    private var suffix: String {
+        switch status.state {
+        case .success:
+            return "\(status.resultCount)"
+        case .partialFailure:
+            return "\(status.resultCount)!"
+        case .failed:
+            return "fail"
+        case .skipped:
+            return "skip"
+        }
+    }
+
+    var body: some View {
+        Text("\(status.source.rawValue) \(suffix)")
+            .font(.system(.caption2, design: .monospaced))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(color.opacity(0.08))
+            )
+            .help(helpText)
+    }
+
+    private var helpText: String {
+        var parts = [
+            status.source.rawValue,
+            status.state.rawValue,
+            "\(status.resultCount) results"
+        ]
+        if !status.query.isEmpty {
+            parts.append(status.query)
+        }
+        if let message = status.message, !message.isEmpty {
+            parts.append(message)
+        }
+        return parts.joined(separator: " - ")
     }
 }
 

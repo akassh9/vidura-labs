@@ -4,6 +4,10 @@ private struct HarnessFailure: Error, CustomStringConvertible {
     let description: String
 }
 
+private final class AsyncBox<Value>: @unchecked Sendable {
+    var value: Value?
+}
+
 private func fail(_ message: String) throws -> Never {
     throw HarnessFailure(description: message)
 }
@@ -539,6 +543,184 @@ private func testHEPReferencePackDedupeAndSerialization() throws {
     try expectEqual(decoded.referencePack?.references.count, 2, "reference pack export round trips")
 }
 
+private enum ReferenceRefreshFixtureError: LocalizedError {
+    case simulatedHEPDataOutage
+
+    var errorDescription: String? {
+        switch self {
+        case .simulatedHEPDataOutage:
+            return "fixture HEPData outage"
+        }
+    }
+}
+
+private func testHEPReferenceQueryConstruction() throws {
+    let spec = referenceRefreshSpec()
+    let context = HEPReferenceQueryContext(
+        runTitle: "Hard QCD pT spectrum",
+        prompt: "Compare the charged particle pT spectrum for QCD jets with Pythia.",
+        simulationSpec: spec,
+        chartTitles: ["Transverse Momentum Spectrum"]
+    )
+    let plan = HEPReferenceRetriever.queryPlan(context: context)
+    try expectContains(plan.displayQuery, "Pythia 8", "query includes generator context")
+    try expectContains(plan.displayQuery, "transverse momentum spectrum", "query includes analysis family")
+    try expectContains(plan.displayQuery, "QCD jets", "query includes process context")
+    try expectContains(plan.arxivQuery, #"all:"Pythia 8""#, "arXiv query is source-specific")
+    try expectContains(plan.inspireQuery, "QCD jets", "INSPIRE query uses display terms")
+    try expect(plan.tags.contains(AnalysisFamily.ptSpectrum.rawValue), "query tags include analysis family")
+}
+
+private func testHEPReferenceRefreshMergeFailureStatusAndSerialization() throws {
+    let existingPack = HEPReferencePackAssembler.baselinePack(
+        query: "baseline pythia references",
+        simulationSpec: referenceRefreshSpec(),
+        generatedAt: "2026-07-08T00:00:00Z"
+    )
+    let context = HEPReferenceQueryContext(
+        runTitle: "Hard QCD pT spectrum",
+        prompt: "Compare charged pT spectra for QCD jets.",
+        simulationSpec: referenceRefreshSpec(),
+        chartTitles: ["Transverse Momentum Spectrum"]
+    )
+    let pack = waitFor {
+        await HEPReferenceRetriever.refresh(
+            existingPack: existingPack,
+            context: context,
+            limits: HEPReferenceRetrievalLimits(maxArxivResults: 2, maxInspireResults: 2, maxHEPDataRecords: 2, maxReferencesPerSource: 4),
+            generatedAt: "2026-07-08T01:00:00Z",
+            fetcher: { source, url in
+                try await referenceRefreshFixtureFetcher(source: source, url: url)
+            }
+        )
+    }
+
+    try expect(pack.references.contains(where: { $0.doi == "10.1016/j.cpc.2015.01.024" }), "refresh preserves baseline Pythia reference")
+    try expect(pack.references.contains(where: { $0.inspireId == "1860766" }), "refresh merges INSPIRE result")
+    try expect(pack.references.contains(where: { $0.hepDataId == "ins1860766" }), "refresh merges successful HEPData record")
+    try expect(pack.references.contains(where: { $0.source == .pdg }), "refresh includes PDG canonical reference")
+
+    let statuses = Dictionary(uniqueKeysWithValues: pack.sourceStatuses.map { ($0.source, $0) })
+    try expectEqual(statuses[.arxiv]?.state, .success, "arXiv status succeeds")
+    try expectEqual(statuses[.inspire]?.state, .success, "INSPIRE status succeeds")
+    try expectEqual(statuses[.hepdata]?.state, .partialFailure, "HEPData status records partial failure")
+    try expectEqual(statuses[.pdg]?.state, .success, "PDG status succeeds locally")
+    try expectContains(statuses[.hepdata]?.message ?? "", "fixture HEPData outage", "HEPData status preserves failure message")
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = try encoder.encode(pack)
+    let json = String(data: data, encoding: .utf8) ?? ""
+    try expectContains(json, "\"source_statuses\"", "reference pack serializes source statuses")
+    try expectContains(json, "\"partial_failure\"", "reference pack serializes partial failure state")
+
+    let decoded = try JSONDecoder().decode(HEPReferencePack.self, from: data)
+    try expectEqual(decoded.sourceStatuses.count, 4, "reference source statuses round trip")
+}
+
+private func referenceRefreshFixtureFetcher(source: HEPReferenceSource, url: URL) async throws -> Data {
+    switch source {
+    case .arxiv:
+        return Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+          <entry>
+            <id>http://arxiv.org/abs/1410.3012v3</id>
+            <published>2014-10-11T00:00:00Z</published>
+            <title>An Introduction to PYTHIA 8.2</title>
+            <summary>Duplicate generator result from fixture refresh.</summary>
+            <author><name>Torbjorn Sjostrand</name></author>
+            <category term="hep-ph" />
+            <arxiv:doi>10.1016/j.cpc.2015.01.024</arxiv:doi>
+          </entry>
+        </feed>
+        """.utf8)
+    case .inspire:
+        return Data("""
+        {
+          "hits": {
+            "hits": [
+              {
+                "id": "1860766",
+                "metadata": {
+                  "titles": [{"title": "Measurement of fixture transverse momentum spectra"}],
+                  "authors": [{"full_name": "Fixture, Analyst"}],
+                  "arxiv_eprints": [{"value": "2101.00001"}],
+                  "publication_info": [{"year": 2021}],
+                  "keywords": [{"value": "QCD"}]
+                }
+              }
+            ]
+          }
+        }
+        """.utf8)
+    case .hepdata:
+        if url.absoluteString.contains("ins1321709") {
+            throw ReferenceRefreshFixtureError.simulatedHEPDataOutage
+        }
+        return Data("""
+        {
+          "@id": "https://www.hepdata.net/record/ins1860766",
+          "name": "Measurement of fixture transverse momentum spectra",
+          "identifier": ["ins1860766"],
+          "sameAs": ["https://inspirehep.net/literature/1860766", "https://arxiv.org/abs/2101.00001"],
+          "datePublished": "2021-02-03",
+          "keywords": ["pT spectra"],
+          "description": "Fixture HEPData pT spectrum record."
+        }
+        """.utf8)
+    case .pdg:
+        return Data()
+    }
+}
+
+private func waitFor<T>(_ operation: @escaping () async -> T) -> T {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = AsyncBox<T>()
+    Task {
+        box.value = await operation()
+        semaphore.signal()
+    }
+    semaphore.wait()
+    return box.value!
+}
+
+private func referenceRefreshSpec() -> SimulationSpec {
+    let observable = ObservableSpec(
+        id: "pt_spectrum",
+        kind: "hist1d",
+        unit: "GeV",
+        source: "particle",
+        op: "pT",
+        selector: "isFinal && isCharged",
+        bins: 80,
+        min: 0.0,
+        max: 200.0,
+        outputKeys: ["mean_pt"]
+    )
+    return SimulationSpec(
+        runId: "reference-refresh-fixture",
+        pythiaTag: "8.3",
+        seed: 12345,
+        beams: BeamSpec(frameType: "pp", eCmGev: 13_000),
+        processSettings: ["HardQCD:all = on"],
+        cutsSettings: ["PhaseSpace:pTHatMin = 20."],
+        eventCount: 1_000,
+        observables: [observable],
+        analysisPlan: AnalysisPlan(
+            family: AnalysisFamily.ptSpectrum.rawValue,
+            selectors: ["isFinal", "isCharged"],
+            observables: [observable]
+        ),
+        outputPlan: OutputPlan(
+            summaryJson: true,
+            logs: true,
+            plots: true,
+            extraFiles: ["hist_primary.txt"]
+        )
+    )
+}
+
 private func qualityInput(
     title: String = "Charged multiplicity",
     eventCount: Int = 10_000,
@@ -605,7 +787,9 @@ let tests: [(String, () throws -> Void)] = [
     ("PhysicsReviewerAgent.parseResponseJSON", testPhysicsReviewerResponseParsing),
     ("PhysicsReviewerAgent.fallbackFindings", testPhysicsReviewerFallback),
     ("HEPReference parsing and normalization", testHEPReferenceParsingAndNormalization),
-    ("HEPReferencePack dedupe and serialization", testHEPReferencePackDedupeAndSerialization)
+    ("HEPReferencePack dedupe and serialization", testHEPReferencePackDedupeAndSerialization),
+    ("HEPReferenceRetriever query construction", testHEPReferenceQueryConstruction),
+    ("HEPReferenceRetriever refresh merge and status", testHEPReferenceRefreshMergeFailureStatusAndSerialization)
 ]
 
 do {
