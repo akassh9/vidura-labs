@@ -15,10 +15,16 @@ Start by reading:
 - docs/PROJECT_ORIENTATION.md
 - docs/NEXT_THREAD_HANDOFF.md
 - docs/CTO_ROADMAP.md
+- docs/HEP_CORRECTNESS_BENCHMARK.md
 
-Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, or secrets.
+Do not redo the provider migration. The app is macOS-first, OpenAI-backed, and Pythia-focused. The old CLI direction is dropped. Do not print .env or API keys. Do not commit local DBs, DerivedData, generated simulation artifacts, exported bundles, benchmark reports, or secrets.
 
-Your task: implement the next slice, Analysis Plan Editor v1.
+Strategic direction:
+- Vidura should not compete on "AI writes Pythia code." That is commodity model behavior.
+- The wedge is correctness verification for computational HEP.
+- The model provider should stay swappable. The durable asset is a benchmark/corpus of verified HEP runs, failures, corrections, and reviewer judgments.
+
+Your task: implement the next slice, HEP Correctness Benchmark Harness v0.
 
 Context:
 - Run Evidence / Provenance exists.
@@ -34,55 +40,68 @@ Context:
 - HEP Reference Pack Retrieval v1 is merged.
 - Reference-Grounded Physics Reviewer v2 is merged.
 - The app can now run, rerun, compare, export, refresh references, and review completed runs against artifacts and references.
-- The gap: users still cannot inspect or adjust the generated `SimulationSpec` / `AnalysisPlan` before codegen and Pythia execution. This makes the app feel too black-box for a physics workbench.
+- The gap: we need benchmarkable proof that Vidura catches HEP correctness failures that general AI workflows miss.
 
 Implementation target:
-1. Add a compact pre-execution Analysis Plan review state after `AnalysisPlannerAgent` produces a `SimulationSpec` and before codegen/runner execution.
-2. Surface the pending plan in the existing thread UI with editable fields for:
-   - event count;
-   - random seed;
-   - process settings;
-   - cuts/settings such as `PhaseSpace:pTHatMin`;
-   - observables and output files;
-   - analysis family / assumptions.
-3. Support three actions:
-   - Accept Run: use the generated plan unchanged and continue to existing codegen/runner behavior.
-   - Edit & Run: validate edits, then use the edited `SimulationSpec` as the source of truth for codegen and evidence.
-   - Cancel: stop the pending execution cleanly without producing a misleading completed run.
-4. Persist the accepted/edited spec through the existing evidence path as `simulation_spec.json`.
-5. Record whether a plan was user-edited in run configuration or evidence metadata without a schema migration if possible.
-6. Add deterministic validation before codegen for invalid event counts, invalid seed values, empty observables, unsafe/empty process or cut settings, and duplicate output filenames.
-7. Reuse existing parameterized-rerun editing helpers where they fit, but this must work for first-run execution, not only variants.
-8. Keep downstream behavior unchanged: generated `run.cc`, charts, evidence, reference packs, Run Quality, Physics Reviewer, Run Compare, exports, exact reruns, and parameterized reruns should all see the accepted/edited spec as the actual run spec.
-9. Add fixture-driven regression coverage to `./script/reproducibility_regression.sh` for plan edit validation and spec serialization.
+1. Add a benchmark fixture directory, likely `benchmarks/hep_correctness/`, with a documented task schema.
+2. Add a local benchmark runner script, likely `./script/hep_correctness_benchmark.sh`.
+3. Keep v0 deterministic and offline: no live OpenAI calls and no live network/source calls.
+4. Include at least 10 initial HEP correctness fixtures covering:
+   - low event statistics;
+   - missing expected evidence;
+   - empty declared output files;
+   - event-count mismatch;
+   - histogram overflow;
+   - hard-process or `PhaseSpace:pTHatMin` cuts described as inclusive/minimum-bias;
+   - unsupported external-measurement or published-result claims;
+   - missing citations/reference coverage;
+   - invented or irrelevant reference IDs;
+   - figure/summary mismatch;
+   - unit or observable ambiguity.
+5. Reuse existing pure analyzer/reviewer code where possible:
+   - `RunQualityAnalyzer`
+   - `PhysicsReviewerAgent`
+   - `HEPReferencePack` / `HEPReferences.swift`
+   - existing regression harness patterns in `script/reproducibility_regression/`
+6. Score Vidura findings against expected benchmark findings:
+   - category match;
+   - severity match;
+   - evidence reference coverage;
+   - reference ID coverage where applicable.
+7. Emit a machine-readable report and human-readable report, for example:
+   - `benchmark-results/hep_correctness/report.json`
+   - `benchmark-results/hep_correctness/report.md`
+   The output directory must be ignored and not committed.
+8. Include competitor-output fixture slots in the schema so later slices can compare Vidura against ChatGPT/Claude/other general AI outputs without adding live model calls to v0.
+9. Keep existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage, Run Quality, Physics Reviewer, HEP References, Refresh References, and the reproducibility regression harness working.
 
 Implementation constraints:
-- Keep the UI quiet, dense, and operational. Do not add a wizard or broad redesign.
-- Avoid a schema migration unless there is a hard reason.
-- Do not route this through OpenAI after the user edits the plan unless existing codegen already does that for execution.
-- Do not break exact rerun or parameterized rerun contracts.
+- Do not add live model calls to the benchmark runner.
+- Do not add live network/source calls to the benchmark runner.
+- Do not commit generated benchmark reports.
+- Keep fixture artifacts small and text-based.
+- Avoid broad app UI changes in this slice.
 - Do not print `.env` or API keys.
 
 Validation:
-1. Run `./script/reproducibility_regression.sh`.
-2. Run `./script/build_and_run.sh build`.
-3. Run `./script/build_and_run.sh --verify`.
-4. Confirm launch with `pgrep -x "Vidura Labs"`.
-5. Run `git diff --check` and `git diff --cached --check`.
-6. Confirm no `.env`, local DBs, DerivedData, generated simulation folders, exported bundles, key/cert-like files, or `.codex/backups` are tracked.
-7. Run a diff and staged-diff secret scan before pushing.
-8. Push the branch and open a PR against `akassh9/vidura-labs/main`.
+1. Run `./script/hep_correctness_benchmark.sh`.
+2. Run `./script/reproducibility_regression.sh`.
+3. Run `./script/build_and_run.sh build`.
+4. Run `./script/build_and_run.sh --verify`.
+5. Confirm launch with `pgrep -x "Vidura Labs"`.
+6. Run `git diff --check` and `git diff --cached --check`.
+7. Confirm no `.env`, local DBs, DerivedData, generated simulation folders, exported bundles, benchmark reports, key/cert-like files, or `.codex/backups` are tracked.
+8. Run a diff and staged-diff secret scan before pushing.
+9. Push the branch and open a PR against `akassh9/vidura-labs/main`.
 
 Report back with:
 - PR URL
 - changed files
+- benchmark task schema
+- fixture categories included
+- scoring behavior
+- benchmark report output paths
 - validation commands and results
-- where the pending-plan state lives
-- how Accept Run, Edit & Run, and Cancel work
-- which `SimulationSpec` fields are editable
-- validation rules added
-- how edited specs are persisted and marked
-- harness cases added
-- any fresh smoke run or why it was skipped
+- whether the benchmark is fully offline
 - known gaps or follow-up recommendations
 ```
