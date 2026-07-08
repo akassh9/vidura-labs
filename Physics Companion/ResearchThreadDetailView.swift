@@ -2092,6 +2092,10 @@ private struct RunEvidenceCard: View {
         )
     }
 
+    private var referencePack: HEPReferencePack? {
+        HEPReferencePackAdapter.pack(in: artifacts)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -2236,6 +2240,9 @@ private struct RunEvidenceCard: View {
             if run.status == .completed {
                 RunQualityFindingsView(findings: qualityFindings)
                 PhysicsReviewerFindingsView(findings: reviewerFindings)
+                if let referencePack {
+                    HEPReferencesBlock(pack: referencePack)
+                }
             }
 
             Divider()
@@ -2918,6 +2925,114 @@ private struct PhysicsReviewerFindingRow: View {
     }
 }
 
+private struct HEPReferencesBlock: View {
+    let pack: HEPReferencePack
+
+    private var visibleReferences: [HEPReference] {
+        Array(pack.references.prefix(4))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "books.vertical.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                Text("References")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                MetricChip(label: "Refs", value: "\(pack.references.count)")
+            }
+
+            VStack(spacing: 3) {
+                ForEach(visibleReferences) { reference in
+                    HEPReferenceRow(reference: reference)
+                }
+                if pack.references.count > visibleReferences.count {
+                    Text("\(pack.references.count - visibleReferences.count) more references")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+}
+
+private struct HEPReferenceRow: View {
+    let reference: HEPReference
+
+    private var sourceText: String {
+        reference.sources.map(\.rawValue).joined(separator: "+")
+    }
+
+    private var identifierText: String? {
+        if let doi = reference.doi { return "doi:\(doi)" }
+        if let arxivId = reference.arxivId { return "arXiv:\(arxivId)" }
+        if let inspireId = reference.inspireId { return "INSPIRE:\(inspireId)" }
+        if let hepDataId = reference.hepDataId { return "HEPData:\(hepDataId)" }
+        return reference.url
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(sourceText)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.blue.opacity(0.08))
+                )
+                .lineLimit(1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(reference.title)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                    if let year = reference.year {
+                        Text("(\(year))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let collaboration = reference.collaboration {
+                    Text(collaboration)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if !reference.authors.isEmpty {
+                    Text(reference.authors.prefix(3).joined(separator: ", "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if let identifierText {
+                    Text(identifierText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.blue.opacity(0.06))
+        )
+    }
+}
+
 private extension RunQualitySeverity {
     var iconName: String {
         switch self {
@@ -2957,6 +3072,16 @@ private struct ArtifactGroup: Identifiable {
     let icon: String
     let order: Int
     let artifacts: [ArtifactRef]
+}
+
+private enum HEPReferencePackAdapter {
+    static func pack(in artifacts: [ArtifactRef]) -> HEPReferencePack? {
+        guard let url = RunQualityAdapter.artifactURL(named: "reference_pack.json", in: artifacts),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(HEPReferencePack.self, from: data)
+    }
 }
 
 private enum RunQualityAdapter {
@@ -3124,6 +3249,7 @@ private enum RunEvidenceResolver {
         ("summary_lines.txt", "summary"),
         ("compile.log", "log"),
         ("run.log", "log"),
+        ("reference_pack.json", "reference"),
         ("physics_reviewer.json", "review")
     ]
 
@@ -3210,10 +3336,12 @@ private enum RunEvidenceResolver {
             return ("log", "Logs", "terminal", 3)
         case "data", "plot":
             return ("data", "Plots and Tables", "chart.xyaxis.line", 4)
+        case "reference":
+            return ("reference", "References", "books.vertical", 5)
         case "review":
-            return ("review", "Reviewer", "checkmark.seal", 5)
+            return ("review", "Reviewer", "checkmark.seal", 6)
         default:
-        return ("other", "Other Evidence", "doc", 6)
+        return ("other", "Other Evidence", "doc", 7)
         }
     }
 
@@ -3229,10 +3357,12 @@ private enum RunEvidenceResolver {
             return ("log", "Logs", "terminal", 3)
         case "data":
             return ("data", "Plots and Tables", "chart.xyaxis.line", 4)
+        case "reference":
+            return ("reference", "References", "books.vertical", 5)
         case "review":
-            return ("review", "Reviewer", "checkmark.seal", 5)
+            return ("review", "Reviewer", "checkmark.seal", 6)
         default:
-            return ("other", "Other Evidence", "doc", 6)
+            return ("other", "Other Evidence", "doc", 7)
         }
     }
 
@@ -3367,6 +3497,7 @@ private enum RunBundleExporter {
         let summaryMetrics: [String: String]
         let qualityFindings: [RunQualityFinding]
         let reviewerFindings: [PhysicsReviewerFinding]
+        let referencePack: HEPReferencePack?
         let charts: [ChartSummary]
         let artifacts: [BundleArtifact]
         let missingArtifacts: [MissingArtifact]
@@ -3383,6 +3514,7 @@ private enum RunBundleExporter {
             case summaryMetrics = "summary_metrics"
             case qualityFindings = "quality_findings"
             case reviewerFindings = "reviewer_findings"
+            case referencePack = "reference_pack"
             case charts
             case artifacts
             case missingArtifacts = "missing_artifacts"
@@ -3497,6 +3629,7 @@ private enum RunBundleExporter {
             summaryMetrics: summaryMetrics,
             qualityFindings: qualityFindings
         )
+        let referencePack = referencePack(in: bundleURL, copiedArtifacts: copiedArtifacts)
         let chartSummaries = chartPayloads.map { chart in
             ChartSummary(
                 title: chart.title,
@@ -3527,6 +3660,7 @@ private enum RunBundleExporter {
             summaryMetrics: summaryMetrics,
             qualityFindings: qualityFindings,
             reviewerFindings: reviewerFindings,
+            referencePack: referencePack,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3540,6 +3674,7 @@ private enum RunBundleExporter {
             summaryMetrics: summaryMetrics,
             qualityFindings: qualityFindings,
             reviewerFindings: reviewerFindings,
+            referencePack: referencePack,
             charts: chartSummaries,
             artifacts: copiedArtifacts,
             missingArtifacts: missingArtifacts,
@@ -3756,6 +3891,22 @@ private enum RunBundleExporter {
         return try? JSONDecoder().decode(PhysicsReviewerEnvelope.self, from: data)
     }
 
+    private static func referencePack(
+        in bundleURL: URL,
+        copiedArtifacts: [BundleArtifact]
+    ) -> HEPReferencePack? {
+        guard let artifact = copiedArtifacts.first(where: {
+            URL(fileURLWithPath: $0.path).lastPathComponent == "reference_pack.json"
+        }) else {
+            return nil
+        }
+        let url = bundleURL.appendingPathComponent(artifact.path)
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(HEPReferencePack.self, from: data)
+    }
+
     private static func textFile(at url: URL) -> String? {
         try? String(contentsOf: url, encoding: .utf8)
     }
@@ -3766,6 +3917,7 @@ private enum RunBundleExporter {
         summaryMetrics: [String: String],
         qualityFindings: [RunQualityFinding],
         reviewerFindings: [PhysicsReviewerFinding],
+        referencePack: HEPReferencePack?,
         charts: [ChartSummary],
         artifacts: [BundleArtifact],
         missingArtifacts: [MissingArtifact],
@@ -3851,6 +4003,34 @@ private enum RunBundleExporter {
                     lines.append("  - Evidence: \(finding.evidenceReferences.joined(separator: "; "))")
                 }
             }
+        }
+
+        lines.append("")
+        lines.append("## References")
+        lines.append("")
+        if let referencePack, !referencePack.references.isEmpty {
+            for reference in referencePack.references {
+                var parts: [String] = []
+                parts.append(reference.sources.map(\.rawValue).joined(separator: "+"))
+                if let year = reference.year {
+                    parts.append("\(year)")
+                }
+                if let doi = reference.doi {
+                    parts.append("doi:\(doi)")
+                }
+                if let arxivId = reference.arxivId {
+                    parts.append("arXiv:\(arxivId)")
+                }
+                if let inspireId = reference.inspireId {
+                    parts.append("INSPIRE:\(inspireId)")
+                }
+                if let hepDataId = reference.hepDataId {
+                    parts.append("HEPData:\(hepDataId)")
+                }
+                lines.append("- \(reference.title) [\(parts.joined(separator: ", "))]")
+            }
+        } else {
+            lines.append("No reference pack was available in this run bundle.")
         }
 
         lines.append("")
