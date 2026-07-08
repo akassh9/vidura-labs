@@ -1,6 +1,6 @@
 # CTO Roadmap
 
-Date: 2026-07-07
+Date: 2026-07-08
 
 ## Product North Star
 
@@ -158,11 +158,15 @@ Completed:
 - HEP Source Connectors v1 with typed arXiv, INSPIRE, HEPData, and PDG
   reference models, fixture-tested parsers, baseline `reference_pack.json`
   evidence, Run Evidence display, and export metadata.
+- HEP Reference Pack Retrieval v1 with an explicit completed-run refresh action,
+  deterministic query construction, bounded arXiv/INSPIRE/HEPData/PDG retrieval,
+  per-source statuses, persisted refreshed `reference_pack.json`, compact Run
+  Evidence status chips, and fixture-backed regression coverage.
 
 This is a strong Phase 0/1 foundation. It is still far from the workbench
-benchmark because it lacks live source-retrieval workflows, managed compute,
-native physics artifact viewers, richer review workflows, and publication
-workflows.
+benchmark because it lacks reference-grounded reviewer behavior, managed
+compute, native physics artifact viewers, richer review workflows, and
+publication workflows.
 
 ## Execution Principles
 
@@ -243,10 +247,13 @@ Completed:
 Needed:
 
 - fresh smoke runs that exercise persisted reviewer artifacts end to end;
-- stronger reviewer checks once external HEP references are available.
+- reviewer checks that consume persisted HEP reference packs and distinguish
+  artifact-backed, citation-backed, and unsupported claims.
 
-The next trust gap is not another internal checker. It is external physics
-grounding: citations, public data, and reference measurements.
+The next trust gap is no longer source collection. It is using those sources:
+the reviewer must stop treating references as decoration and start checking
+whether the final interpretation is grounded in the run artifacts and the
+persisted HEP references.
 
 ### Phase 3: Become Domain-Ready For HEP
 
@@ -265,11 +272,18 @@ Completed:
 - reference-pack metadata in exported run bundles;
 - fixture regression coverage for parsing, normalization, dedupe, and export
   serialization.
+- user-triggered live retrieval/refresh using arXiv, INSPIRE, HEPData, and PDG;
+- deterministic reference query construction from run title, prompt,
+  `simulation_spec.json`, process/cut context, observables, and chart titles;
+- per-source refresh statuses for success, skipped, failed, and partial-failure
+  states;
+- refreshed `reference_pack.json` persistence without a schema migration;
+- compact Run Evidence status chips for refreshed source counts and failures;
+- fixture regression coverage for query construction, merge behavior, partial
+  failures, and status serialization.
 
 Needed:
 
-- user-triggered live retrieval/refresh using arXiv, INSPIRE, HEPData, and PDG
-  helpers;
 - reviewer/summary stages that can consume real reference packs;
 - connectors for CERN Open Data, LHAPDF, and relevant experiment public
   repositories;
@@ -339,42 +353,44 @@ artifacts, compute integration, specialist agents, and reviewer checks.
 
 ## Current Next Slice
 
-HEP Reference Pack Retrieval v1.
+Reference-Grounded Physics Reviewer v2.
 
-Why: Claude Science's differentiator is not just that it runs tools. It checks
-whether artifacts are traceable, figures match code, calculations are sound, and
-outputs can be reproduced against scientific sources. Vidura now has local
-Pythia execution, reproducible runs, deterministic quality checks, a first
-physics reviewer, and typed HEP reference connectors. The next step is making
-those connectors useful through an explicit retrieval/refresh workflow that
-updates a run or thread reference pack without making normal run completion
-depend on network availability.
+Why: Claude Science's value is the closed scientific loop: tools produce
+artifacts, reviewers inspect those artifacts, and conclusions are grounded in
+evidence. Vidura can now create reproducible Pythia runs and attach HEP
+reference packs, including refreshed live sources. The next step is making the
+reviewer consume those reference packs so it can flag unsupported claims,
+missing citations, failed source coverage, and overclaims against public
+literature/data context.
 
 Scope:
 
-- add a user-triggered "Refresh References" or equivalent action for completed
-  runs, using deterministic query construction from run title, prompt,
-  simulation spec, analysis family, process settings, and chart labels;
-- call the existing arXiv, INSPIRE, HEPData, and PDG helpers behind a small
-  service that bounds result counts and handles failures per source;
-- merge live results into `reference_pack.json` without losing baseline
-  references or source-specific IDs;
-- show retrieval status and partial-failure information compactly in the
-  existing References surface;
-- keep bundle export deterministic by serializing persisted reference packs only;
-- add fixture-driven coverage for query construction, partial source failures,
-  merge behavior, and status serialization;
-- optionally run a small live smoke query outside the regression harness.
+- extend reviewer input construction to include persisted `reference_pack.json`
+  content: query, tags, references, source IDs, URLs, source attribution, and
+  refresh statuses;
+- update the model reviewer prompt/schema so findings can cite reference IDs
+  from the pack and must not invent references;
+- add deterministic fallback checks for missing reference packs, failed/partial
+  source refreshes, citation-sensitive summaries with no supporting references,
+  and final-summary claims that mention external measurements without citations;
+- keep reviewer execution evidence-driven and artifact-only: no live source API
+  calls and no refresh during export;
+- show reference-backed reviewer findings compactly in the existing Reviewer /
+  Run Quality area without redesigning Run Evidence;
+- include reference-grounded reviewer output in `physics_reviewer.json`,
+  `manifest.json`, and `run_report.md`;
+- add fixture-driven regression coverage for reference-pack input shaping,
+  missing-pack fallback, source-status warnings, response parsing with
+  reference IDs, and export serialization.
 
 ## Next 8 Product Slices
 
-1. HEP Reference Pack Retrieval v1 with explicit refresh and partial-failure
-   handling.
-2. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
-3. Analysis Plan Editor so users can review/edit assumptions before execution.
-4. Native physics artifact viewer upgrades: richer histograms, tables, and
+1. Reviewer v2 that uses HEP reference packs for citation/data-grounded claims.
+2. Analysis Plan Editor so users can review/edit assumptions before execution.
+3. Native physics artifact viewer upgrades: richer histograms, tables, and
    event-output inspection.
-5. Reusable HEP analysis templates and skills.
+4. Reusable HEP analysis templates and skills.
+5. Public-data comparison v1 against HEPData where compatible observables exist.
 6. Local compute session model with environment capture, preparing for SSH/HPC.
 7. Portable cited run bundles with stronger manifest/environment capture.
 8. Publication/analysis-note export with reviewer-gated claims.

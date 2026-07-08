@@ -351,82 +351,126 @@ HEP Source Connectors v1:
   user-triggered retrieval. New completed runs get the deterministic baseline
   HEP reference pack.
 
+HEP Reference Pack Retrieval v1:
+
+- PR #19: `https://github.com/akassh9/vidura-labs/pull/19`
+- Merged at `de1ce8e17a91b96d02e962b5f004a560c62d33d1`.
+- Added a completed-run Refresh References action in Run Evidence.
+- Added deterministic query construction from run title, prompt/messages,
+  `simulation_spec.json`, analysis family, process/cut context, observables,
+  and chart titles.
+- Added bounded arXiv, INSPIRE, HEPData, and PDG refresh flow with per-source
+  statuses: success, skipped, failed, and partial failure.
+- Refreshed references merge into the existing `reference_pack.json` while
+  preserving baseline references, source IDs, source attribution, URLs, and
+  tags.
+- Refresh status is persisted inside `reference_pack.json` as
+  `source_statuses`; older packs decode with an empty status list.
+- Run Evidence shows compact source-status chips in the References block.
+- Export Run Bundle remains deterministic and serializes the persisted
+  reference pack only; it does not call live source APIs.
+- Harness coverage in `./script/reproducibility_regression.sh`:
+  - query construction;
+  - merge behavior with existing baseline references;
+  - partial HEPData failure handling;
+  - per-source status serialization and decoding.
+- CTO review validation before merge:
+  - `./script/reproducibility_regression.sh` succeeded.
+  - `./script/build_and_run.sh build` succeeded.
+  - `./script/build_and_run.sh --verify` succeeded.
+  - `pgrep -x "Vidura Labs"` confirmed launch from `.codex/DerivedData`.
+  - `git diff --check origin/main...HEAD` passed.
+  - `git diff --cached --check` passed.
+  - Tracked-file hygiene and diff/staged diff secret scans were clean.
+  - GitHub reported no checks configured for the branch.
+- Live endpoint probe during CTO review:
+  - arXiv API returned HTTP 200.
+  - INSPIRE API returned HTTP 200.
+  - HEPData base returned HTTP 200.
+  - The specific Pythia-generator HEPData record probe returned HTTP 404, which
+    is covered by per-source failed/partial-failure status handling.
+- Known residual gap: no manual native UI click-through of the refresh button
+  was done during merge review. The next product gap is not fetching sources;
+  it is making reviewer output use those sources.
+
 ## Next Product Slice
 
-HEP Reference Pack Retrieval v1.
+Reference-Grounded Physics Reviewer v2.
 
-Why this next: Vidura now has typed source models, parsers, and baseline
-reference packs. The next trust gap is using those connectors in the product.
-Users need an explicit way to refresh a run's references from arXiv, INSPIRE,
-HEPData, and PDG without making simulation completion depend on network access.
+Why this next: Vidura now has deterministic run evidence, run quality checks,
+Physics Reviewer v1, baseline HEP reference packs, and an explicit source
+refresh workflow. The next trust gap is whether the reviewer can use those
+references to separate artifact-backed claims, citation-backed claims, and
+unsupported claims.
 
-This should stay small: a bounded retrieval workflow that updates
-`reference_pack.json`, shows partial source failures, and preserves deterministic
-export behavior.
+This should stay small: extend reviewer input and output around persisted
+reference packs. Do not add another retrieval workflow, do not redesign Run
+Evidence, and do not make reviewer/export paths call live source APIs.
 
 Recommended scope:
 
-- add a user-triggered Refresh References action for completed runs, probably in
-  the existing Run Evidence card near the References block;
-- build deterministic query construction from run title, original prompt,
-  `simulation_spec.json`, analysis family, process settings, and chart labels;
-- call arXiv, INSPIRE, HEPData, and PDG helpers behind a small service with
-  bounded result counts and per-source error capture;
-- merge live results with the existing baseline pack using
-  `HEPReferencePackAssembler`, preserving all source-specific IDs and tags;
-- persist the refreshed `reference_pack.json` artifact and update Run Evidence;
-- surface compact retrieval state: last refreshed time, source counts, and
-  partial failures;
-- keep Export Run Bundle deterministic: serialize persisted reference packs
-  only, never fetch during export;
-- add fixture-driven regression coverage for query construction, partial source
-  failure handling, merge behavior, and status serialization. Do not make the
-  harness depend on live network calls.
+- extend the pure reviewer input builder to include the persisted
+  `reference_pack.json`: query, tags, references, URLs, DOI/arXiv/INSPIRE/
+  HEPData IDs, source attribution, and `source_statuses`;
+- update `PhysicsReviewerAgent` structured output and prompt so findings can
+  cite reference IDs from the pack and must not invent citations;
+- add deterministic fallback warnings for missing reference packs, failed or
+  partial source refreshes, and final-summary language that mentions external
+  measurements/literature without a reference;
+- keep the reviewer artifact-driven: it may consume existing reference packs but
+  must not refresh references or call live APIs;
+- show reference-backed reviewer findings compactly in the existing reviewer
+  area near Run Quality and References;
+- ensure `physics_reviewer.json`, Export Run Bundle `manifest.json`, and
+  `run_report.md` preserve any reference IDs attached to reviewer findings;
+- add fixture-driven regression coverage for reference input shaping, missing
+  pack fallback, source-status warnings, response parsing with reference IDs,
+  and export-style serialization.
 
 Acceptance criteria:
 
 - existing Evidence, Exact Rerun, Parameterized Rerun, Compare, Export, Lineage,
   Run Quality, Physics Reviewer, and regression harness behavior remains intact;
-- refreshing references is explicit and non-fatal when one source fails;
-- refreshed packs preserve baseline references plus live source identifiers;
-- no schema migration unless the agent can justify why current messages,
-  artifacts, or run configuration cannot carry refresh status;
+- reviewer output can distinguish artifact evidence from reference/citation
+  evidence;
+- reviewer findings never cite sources that are not present in
+  `reference_pack.json`;
+- missing/failed reference coverage is surfaced as a warning rather than hiding
+  behind a clean review;
+- no live source APIs are called during reviewer execution or export;
 - validation includes build, verify launch, regression harness, diff check,
   tracked-file hygiene scan, and diff secret scan.
 
 ## Recommended Implementation
 
-Keep retrieval explicitly user-triggered for this slice. Automatic source
-retrieval during every simulation run can come later after we understand latency,
-rate limits, and failure behavior.
+Start with `PhysicsReviewerAgent` and the pure evidence/input-building path.
+Avoid wiring this into source retrieval. The reviewer should consume the
+persisted pack that already exists for the run.
 
 Suggested shape:
 
-- Reuse `HEPReferences.swift`; do not introduce a parallel source model.
-- Prefer a small `HEPReferenceRetrievalService` or equivalent helper that
-  returns references plus per-source status.
-- Keep query building pure and fixture-tested.
-- Make the Run Evidence button disabled or visibly busy while refresh is
-  running.
-- If a source fails, keep successful sources and show the failed source/reason in
-  the References block or artifact metadata.
-- Store refresh status inside `reference_pack.json` only if doing so does not
-  make the format awkward; otherwise add a small sidecar artifact instead of a
-  schema migration.
-- A small live smoke query is useful if network is available, but the regression
-  harness must stay fixture-only.
+- Reuse `HEPReferencePack` and the existing artifact resolver/adapter patterns.
+- Add small Codable fields to reviewer findings only if the current model cannot
+  attach reference IDs cleanly.
+- Keep old `physics_reviewer.json` artifacts decodable if the reviewer schema
+  changes.
+- In the model prompt, require reference IDs to come from supplied references
+  only; if no reference supports a claim, the reviewer should say that.
+- Let deterministic fallback produce conservative warnings rather than pretending
+  a run is citation-grounded.
+- Keep UI changes quiet and dense: a few reference chips/IDs in existing
+  reviewer findings are enough for this slice.
 
 ## Acceptance Criteria
 
-- Completed Run Evidence cards can refresh references on demand.
-- Refreshed packs merge with the deterministic baseline and preserve source
-  attribution/IDs.
-- Partial source failures are visible and do not fail the whole refresh.
-- Fixture tests cover query construction, source-status serialization, partial
-  failure merge behavior, and no-network fallback.
-- Existing Physics Reviewer and Run Quality harness cases still pass.
-- Export behavior remains deterministic and serializes the persisted refreshed
-  pack if present.
+- Reviewer input includes persisted reference-pack content when available.
+- Reviewer findings can carry reference IDs/URLs from the pack.
+- Missing packs, failed source statuses, and unsupported citation-sensitive
+  claims produce warnings in deterministic fallback coverage.
+- Export behavior remains deterministic and serializes persisted reviewer
+  findings and reference packs only.
+- Existing Physics Reviewer, Run Quality, HEP Reference, and lineage harness
+  cases still pass.
 - `./script/build_and_run.sh build` succeeds.
 - `./script/build_and_run.sh --verify` succeeds.
 - `./script/reproducibility_regression.sh` succeeds.
