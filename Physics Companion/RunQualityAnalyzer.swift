@@ -62,6 +62,9 @@ enum RunQualityAnalyzer {
         "compile.log",
         "run.log"
     ]
+    private static let expectedEvidenceAllowedEmpty = Set([
+        "compile.log"
+    ])
     private static let lowEventThreshold = 1_000
 
     static func analyze(_ input: RunQualityInput) -> [RunQualityFinding] {
@@ -120,6 +123,9 @@ enum RunQualityAnalyzer {
                 )
             }
             guard artifacts.contains(where: { ($0.byteSize ?? 0) > 0 }) != true else {
+                return nil
+            }
+            if expectedEvidenceAllowedEmpty.contains(name) {
                 return nil
             }
             return finding(

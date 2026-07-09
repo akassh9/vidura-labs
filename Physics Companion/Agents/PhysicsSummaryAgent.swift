@@ -20,7 +20,8 @@ enum PhysicsSummaryAgent {
         simulationSpec: SimulationSpec?,
         executionResult: AttemptExecutionResult,
         summaryDict: [String: Any],
-        chartPayloads: [ChartPayload]
+        chartPayloads: [ChartPayload],
+        qualityFindings: [RunQualityFinding] = []
     ) async -> String? {
         let systemInstruction = """
         You are PhysicsSummaryAgent for a particle-physics simulation assistant.
@@ -31,6 +32,9 @@ enum PhysicsSummaryAgent {
         - If chart data is present, interpret each available observable's trend shape and what it implies physically.
         - Treat plot_paths and chart payload titles as available plot evidence; do not claim an observable is missing when its artifact or chart payload is present.
         - If chart data is absent, still provide conclusions from run metrics.
+        - Treat Run Quality warnings and errors as hard evidence.
+        - If Run Quality contains warnings or errors, say the run completed with warnings/issues and name the most important issue.
+        - Do not use unqualified "run succeeded" or "clean run" language unless Run Quality has no warnings or errors.
 
         Output style:
         - 2-3 short paragraphs.
@@ -47,7 +51,8 @@ enum PhysicsSummaryAgent {
             simulationSpec: simulationSpec,
             executionResult: executionResult,
             summaryDict: summaryDict,
-            chartPayloads: chartPayloads
+            chartPayloads: chartPayloads,
+            qualityFindings: qualityFindings
         )
 
         do {
@@ -68,7 +73,11 @@ enum PhysicsSummaryAgent {
             // Fall through to deterministic fallback.
         }
 
-        return fallbackSummary(summaryDict: summaryDict, chartPayloads: chartPayloads)
+        return fallbackSummary(
+            summaryDict: summaryDict,
+            chartPayloads: chartPayloads,
+            qualityFindings: qualityFindings
+        )
     }
 
     private static func buildPayload(
@@ -79,7 +88,8 @@ enum PhysicsSummaryAgent {
         simulationSpec: SimulationSpec?,
         executionResult: AttemptExecutionResult,
         summaryDict: [String: Any],
-        chartPayloads: [ChartPayload]
+        chartPayloads: [ChartPayload],
+        qualityFindings: [RunQualityFinding]
     ) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -104,6 +114,7 @@ enum PhysicsSummaryAgent {
         let specJSON = simulationSpec.flatMap { try? encoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         let executionJSON = (try? encoder.encode(executionResult)).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         let chartJSON = (try? encoder.encode(chartPayloads)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let qualityJSON = (try? encoder.encode(qualityFindings)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
 
         let summaryJSON: String
         if JSONSerialization.isValidJSONObject(summaryDict),
@@ -138,19 +149,32 @@ enum PhysicsSummaryAgent {
 
         CHART_PAYLOADS:
         \(chartJSON)
+
+        RUN_QUALITY_FINDINGS:
+        \(qualityJSON)
         """
     }
 
     private static func fallbackSummary(
         summaryDict: [String: Any],
-        chartPayloads: [ChartPayload]
+        chartPayloads: [ChartPayload],
+        qualityFindings: [RunQualityFinding]
     ) -> String {
         var lines: [String] = []
+        let blockingFindings = qualityFindings.filter { $0.severity != .info }
 
         if let generatedEvents = summaryDict["generated_events"] {
-            lines.append("The run completed with \(generatedEvents) generated events.")
+            if blockingFindings.isEmpty {
+                lines.append("The run completed with \(generatedEvents) generated events.")
+            } else {
+                lines.append("The run completed with \(generatedEvents) generated events, but Run Quality reported \(blockingFindings.count) warning/error finding(s).")
+            }
         } else {
             lines.append("The run completed, but generated event count was not available in the summary.")
+        }
+
+        if let topFinding = blockingFindings.first {
+            lines.append("The highest-priority quality issue is \(topFinding.title.lowercased()): \(topFinding.detail)")
         }
 
         let metricKeys = summaryDict.keys
@@ -173,7 +197,11 @@ enum PhysicsSummaryAgent {
             lines.append("No chart artifact was produced for this run, so trend-shape interpretation is not available.")
         }
 
-        lines.append("Takeaways: run succeeded; results should be interpreted within Monte Carlo/statistical uncertainty; rerunning with more events can improve precision")
+        if blockingFindings.isEmpty {
+            lines.append("Takeaways: run succeeded; results should be interpreted within Monte Carlo/statistical uncertainty; rerunning with more events can improve precision")
+        } else {
+            lines.append("Takeaways: run completed with warnings/issues; address Run Quality findings before treating this as clean evidence; rerunning with corrected settings or more events can improve reliability")
+        }
         return lines.joined(separator: "\n\n")
     }
 }

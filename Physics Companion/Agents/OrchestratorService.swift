@@ -1290,6 +1290,12 @@ final class OrchestratorService: ObservableObject {
         }
 
         let runScopedMessages = chatHistory.filter { $0.originRunId == ctx.chatRunId }
+        let qualityFindings: [RunQualityFinding]
+        if let run = try? await store.fetchRun(id: ctx.runId) {
+            qualityFindings = RunQualityAnalyzer.analyze(reviewerQualityInput(for: run))
+        } else {
+            qualityFindings = []
+        }
 
         guard let summaryText = await PhysicsSummaryAgent.run(
             modelName: modelName,
@@ -1301,7 +1307,8 @@ final class OrchestratorService: ObservableObject {
             simulationSpec: ctx.spec,
             executionResult: attempt,
             summaryDict: summaryDict,
-            chartPayloads: chartPayloads
+            chartPayloads: chartPayloads,
+            qualityFindings: qualityFindings
         ) else {
             return nil
         }

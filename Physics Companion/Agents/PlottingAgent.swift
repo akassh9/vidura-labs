@@ -155,10 +155,12 @@ enum PlottingAgent {
 
     /// Parses histogram text output.
     /// Supported formats:
-    /// - `bin_low bin_center bin_high count probability`
-    /// - `x_low x_high content`
-    /// - `x_mid content`
-    /// Lines starting with non-numeric characters are skipped.
+    /// - `bin_low bin_high bin_center count`
+    /// - `bin_low bin_high bin_center count probability`
+    /// - `bin_low bin_high bin_center count count_per_event dN_dpt_per_event`
+    /// - `x_mid count`
+    /// - `x_mid count density`
+    /// Header comments are preferred over column-count inference.
     private static func parseHistogram(
         attemptDir: URL,
         descriptor: HistogramDescriptor
@@ -170,46 +172,32 @@ enum PlottingAgent {
 
         var points: [ChartPoint] = []
         let lines = content.components(separatedBy: .newlines)
+        var headerColumns: [String]?
 
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
+
+            if trimmed.hasPrefix("#") {
+                if let parsedHeader = parseHistogramHeader(trimmed) {
+                    headerColumns = parsedHeader
+                }
+                continue
+            }
 
             let firstChar = trimmed.first!
             guard firstChar == "-" || firstChar == "+" || firstChar.isNumber else {
                 continue
             }
 
-            let tokens = trimmed.split(whereSeparator: { $0.isWhitespace })
+            let values = trimmed
+                .split(whereSeparator: { $0.isWhitespace })
+                .compactMap { Double($0) }
 
-            // Five-column generated table: bin_low bin_center bin_high count probability.
-            if tokens.count >= 5,
-               let xLow = Double(tokens[0]),
-               let xMid = Double(tokens[1]),
-               let xHigh = Double(tokens[2]),
-               let y = Double(tokens[3]) {
-                points.append(ChartPoint(
-                    x: xMid, y: y,
-                    xLow: xLow, xHigh: xHigh
-                ))
+            guard let point = histogramPoint(values: values, headerColumns: headerColumns) else {
+                continue
             }
-            // Three-column legacy format: xLow xHigh content.
-            else if tokens.count >= 3,
-               let xLow = Double(tokens[0]),
-               let xHigh = Double(tokens[1]),
-               let y = Double(tokens[2]) {
-                let xMid = (xLow + xHigh) / 2.0
-                points.append(ChartPoint(
-                    x: xMid, y: y,
-                    xLow: xLow, xHigh: xHigh
-                ))
-            }
-            // Two-column format: xMid content
-            else if tokens.count == 2,
-                    let x = Double(tokens[0]),
-                    let y = Double(tokens[1]) {
-                points.append(ChartPoint(x: x, y: y))
-            }
+            points.append(point)
         }
 
         guard !points.isEmpty else { return nil }
@@ -221,6 +209,174 @@ enum PlottingAgent {
             yLabel: descriptor.yLabel,
             series: [ChartSeries(label: descriptor.title, points: points)]
         )
+    }
+
+    private static func parseHistogramHeader(_ line: String) -> [String]? {
+        let stripped = line
+            .drop(while: { $0 == "#" || $0.isWhitespace })
+            .lowercased()
+        let columns = stripped
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { normalizeColumnName(String($0)) }
+        guard columns.count >= 2 else { return nil }
+
+        let hasColumnMarker = columns.contains { column in
+            isBinLowColumn(column)
+                || isBinHighColumn(column)
+                || isBinCenterColumn(column)
+                || isCountColumn(column)
+                || column.contains("pt")
+                || column == "x"
+                || column == "xmid"
+        }
+        return hasColumnMarker ? columns : nil
+    }
+
+    private static func histogramPoint(values: [Double], headerColumns: [String]?) -> ChartPoint? {
+        guard values.count >= 2 else { return nil }
+
+        if let headerColumns,
+           let headerPoint = histogramPointFromHeader(values: values, headerColumns: headerColumns) {
+            return headerPoint
+        }
+
+        if values.count >= 4 {
+            return histogramPointFromBinnedColumns(values)
+        }
+
+        if values.count == 3 || values.count == 2 {
+            return ChartPoint(x: values[0], y: values[1])
+        }
+
+        return nil
+    }
+
+    private static func histogramPointFromHeader(
+        values: [Double],
+        headerColumns: [String]
+    ) -> ChartPoint? {
+        let limit = min(values.count, headerColumns.count)
+        guard limit >= 2 else { return nil }
+
+        let xLowIndex = firstIndex(in: headerColumns, limit: limit) { isBinLowColumn($0) }
+        let xHighIndex = firstIndex(in: headerColumns, limit: limit) { isBinHighColumn($0) }
+        let xMidIndex = firstIndex(in: headerColumns, limit: limit) { isBinCenterColumn($0) }
+        let yIndex = preferredCountIndex(in: headerColumns, limit: limit)
+
+        guard let yIndex else { return nil }
+
+        if let xMidIndex {
+            return ChartPoint(
+                x: values[xMidIndex],
+                y: values[yIndex],
+                xLow: xLowIndex.map { values[$0] },
+                xHigh: xHighIndex.map { values[$0] }
+            )
+        }
+
+        if let xLowIndex, let xHighIndex {
+            return ChartPoint(
+                x: (values[xLowIndex] + values[xHighIndex]) / 2.0,
+                y: values[yIndex],
+                xLow: values[xLowIndex],
+                xHigh: values[xHighIndex]
+            )
+        }
+
+        let xIndex = firstXIndex(in: headerColumns, limit: limit, excluding: yIndex) ?? 0
+        return ChartPoint(x: values[xIndex], y: values[yIndex])
+    }
+
+    private static func histogramPointFromBinnedColumns(_ values: [Double]) -> ChartPoint? {
+        guard values.count >= 4 else { return nil }
+        let first = values[0]
+        let second = values[1]
+        let third = values[2]
+
+        if second > third, third >= min(first, second), third <= max(first, second) {
+            return ChartPoint(x: third, y: values[3], xLow: first, xHigh: second)
+        }
+
+        if second >= min(first, third), second <= max(first, third) {
+            return ChartPoint(x: second, y: values[3], xLow: first, xHigh: third)
+        }
+
+        return ChartPoint(x: third, y: values[3], xLow: first, xHigh: second)
+    }
+
+    private static func normalizeColumnName(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: CharacterSet(charactersIn: ",;:()[]{}"))
+            .replacingOccurrences(of: "-", with: "_")
+            .lowercased()
+    }
+
+    private static func isBinLowColumn(_ column: String) -> Bool {
+        column.contains("bin_low") || column == "x_low" || column == "low"
+    }
+
+    private static func isBinHighColumn(_ column: String) -> Bool {
+        column.contains("bin_high") || column == "x_high" || column == "high"
+    }
+
+    private static func isBinCenterColumn(_ column: String) -> Bool {
+        column.contains("bin_center")
+            || column == "x_mid"
+            || column == "xmid"
+            || column == "center"
+            || column == "mid"
+    }
+
+    private static func isCountColumn(_ column: String) -> Bool {
+        column == "count"
+            || column == "content"
+            || column == "entries"
+            || column == "value"
+            || column.hasSuffix("_count")
+    }
+
+    private static func isNormalizedColumn(_ column: String) -> Bool {
+        column.contains("probability")
+            || column.contains("density")
+            || column.contains("per_event")
+            || column.contains("dn_")
+            || column.contains("dnd")
+            || column.contains("dn_d")
+    }
+
+    private static func preferredCountIndex(in columns: [String], limit: Int) -> Int? {
+        if let exact = firstIndex(in: columns, limit: limit, matching: { $0 == "count" }) {
+            return exact
+        }
+        return firstIndex(in: columns, limit: limit) { column in
+            isCountColumn(column) && !isNormalizedColumn(column)
+        }
+    }
+
+    private static func firstXIndex(
+        in columns: [String],
+        limit: Int,
+        excluding excludedIndex: Int
+    ) -> Int? {
+        firstIndex(in: columns, limit: limit) { column in
+            column == "x"
+                || column == "x_mid"
+                || column == "xmid"
+                || column.contains("pt")
+                || column.contains("gev")
+        }.flatMap { $0 == excludedIndex ? nil : $0 }
+    }
+
+    private static func firstIndex(
+        in columns: [String],
+        limit: Int,
+        matching predicate: (String) -> Bool
+    ) -> Int? {
+        let upperBound = min(limit, columns.count)
+        for index in 0..<upperBound where predicate(columns[index]) {
+            return index
+        }
+        return nil
     }
 
     private static func parseGenericSecondaryHistograms(
