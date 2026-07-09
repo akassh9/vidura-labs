@@ -24,6 +24,19 @@ private func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: St
     }
 }
 
+private func expectNear(_ actual: Double, _ expected: Double, _ message: String, tolerance: Double = 0.000001) throws {
+    if abs(actual - expected) > tolerance {
+        try fail("\(message): expected \(expected), got \(actual)")
+    }
+}
+
+private func expectNear(_ actual: Double?, _ expected: Double, _ message: String, tolerance: Double = 0.000001) throws {
+    guard let actual else {
+        try fail("\(message): expected \(expected), got nil")
+    }
+    try expectNear(actual, expected, message, tolerance: tolerance)
+}
+
 private func expectContains(_ haystack: String, _ needle: String, _ message: String) throws {
     if !haystack.contains(needle) {
         try fail("\(message): missing \(needle)")
@@ -125,6 +138,125 @@ private func testDeterministicCodegen() throws {
     try expectContains(generated.sourceCode, "std::ofstream histPtFile(\"hist_pt.txt\");", "codegen emits secondary pT histogram")
 }
 
+private func testPlottingAgentHistogramParsing() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("vidura-plotting-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    func write(_ filename: String, _ content: String) throws {
+        try content.write(
+            to: directory.appendingPathComponent(filename),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    func firstPoint(_ family: AnalysisFamily) throws -> ChartPoint {
+        guard let payload = PlottingAgent.run(family: family, attemptDir: directory),
+              let point = payload.series.first?.points.first else {
+            try fail("plotting parser did not produce a first point for \(family.rawValue)")
+        }
+        return point
+    }
+
+    try write("hist_primary.txt", """
+    # charged_multiplicity histogram
+    # bin_low bin_high bin_center count
+    -0.5 7.5 3.5 2605
+    7.5 15.5 11.5 283
+    """)
+    var point = try firstPoint(.chargedMultiplicity)
+    try expectNear(point.x, 3.5, "four-column x uses bin_center")
+    try expectNear(point.y, 2605, "four-column y uses count")
+    try expectNear(point.xLow, -0.5, "four-column xLow")
+    try expectNear(point.xHigh, 7.5, "four-column xHigh")
+
+    try write("hist_primary.txt", """
+    # charged-particle multiplicity distribution per generated event
+    # bin_low bin_high bin_center count probability
+    -0.5 7.5 3.5 2552 0.2552
+    """)
+    point = try firstPoint(.chargedMultiplicity)
+    try expectNear(point.x, 3.5, "five-column x uses bin_center")
+    try expectNear(point.y, 2552, "five-column y uses count")
+
+    try write("hist_primary.txt", """
+    # charged_multiplicity count
+    # bins=100 min=-0.5 max=799.5
+    3.5 2481
+    """)
+    point = try firstPoint(.chargedMultiplicity)
+    try expectNear(point.x, 3.5, "two-column x uses midpoint")
+    try expectNear(point.y, 2481, "two-column y uses count")
+
+    try write("hist_primary.txt", """
+    # charged_multiplicity count probability
+    3.5 1292 0.2584
+    """)
+    point = try firstPoint(.chargedMultiplicity)
+    try expectNear(point.x, 3.5, "three-column x uses midpoint")
+    try expectNear(point.y, 1292, "three-column y uses count, not probability")
+
+    try write("hist_primary.txt", """
+    # x_low x_high content
+    -0.5 7.5 2605
+    """)
+    point = try firstPoint(.chargedMultiplicity)
+    try expectNear(point.x, 3.5, "legacy three-column x uses bin midpoint")
+    try expectNear(point.y, 2605, "legacy three-column y uses content")
+    try expectNear(point.xLow, -0.5, "legacy three-column xLow")
+    try expectNear(point.xHigh, 7.5, "legacy three-column xHigh")
+
+    try write("hist_primary.txt", """
+    # final-state charged-particle pT spectrum
+    # bin_low_GeV bin_high_GeV bin_center_GeV count count_per_event dN_dpt_per_event
+    0 0.5 0.25 461945 46.1945 92.389
+    """)
+    point = try firstPoint(.ptSpectrum)
+    try expectNear(point.x, 0.25, "pT six-column x uses bin_center")
+    try expectNear(point.y, 461945, "pT six-column y uses raw count")
+    try expectNear(point.xLow, 0.0, "pT six-column xLow")
+    try expectNear(point.xHigh, 0.5, "pT six-column xHigh")
+}
+
+private func testAnalysisPlannerMinimumBiasCutsAndObservables() throws {
+    let intent = IntentResult(
+        processHint: "SoftQCD:all = on",
+        beamFrame: "pp",
+        eCmGev: 13_000,
+        eventCount: 10_000,
+        observables: ["charged-particle multiplicity", "pT spectrum"],
+        requestedAnalysisCandidates: ["charged_multiplicity", "pt_spectrum"],
+        prompt: "pp collisions at 13 TeV, 10,000 minimum-bias events, measuring charged-particle multiplicity and pT spectrum"
+    )
+    let spec = AnalysisPlannerAgent.run(
+        runId: "planner-minbias-fixture",
+        pythiaTag: "8.3",
+        seed: 42,
+        intent: intent,
+        templates: [TemplateCandidate(filename: "main101.cc")],
+        legacyContract: false
+    )
+
+    try expect(
+        !spec.cutsSettings.contains(where: { $0.contains("PhaseSpace:pTHatMin") }),
+        "minimum-bias pT measurement should not auto-add pTHatMin"
+    )
+    try expect(
+        spec.observables.contains(where: { $0.id == "charged_multiplicity" }),
+        "primary charged multiplicity observable remains first-class"
+    )
+    try expect(
+        spec.observables.contains(where: { $0.id == "pt_spectrum" }),
+        "requested pT spectrum is first-class in spec observables"
+    )
+    try expect(
+        spec.outputPlan.extraFiles.contains("hist_pt.txt"),
+        "requested pT spectrum still gets secondary histogram artifact"
+    )
+}
+
 private func testRunLineage() throws {
     let sourceRunId = "55C18C16-54E4-4A3C-BFFE-DEEE030A7459"
     let exactRunId = "NEW-EXACT-RERUN-FIXTURE"
@@ -214,6 +346,20 @@ private func testRunQualityAnalyzer() throws {
         id: "empty-output-hist_primary.txt",
         severity: .error,
         "empty declared output"
+    )
+
+    let emptyCompileLogFindings = RunQualityAnalyzer.analyze(qualityInput(
+        artifacts: qualityArtifacts(byteSizes: ["compile.log": 0])
+    ))
+    try expect(
+        !emptyCompileLogFindings.contains(where: { $0.id == "empty-evidence-compile.log" }),
+        "empty clean compile log is acceptable evidence"
+    )
+    try expectFinding(
+        emptyCompileLogFindings,
+        id: "quality-pass",
+        severity: .info,
+        "empty clean compile log keeps healthy pass state"
     )
 
     let lowEventFindings = RunQualityAnalyzer.analyze(qualityInput(eventCount: 200, summaryEvents: 200))
@@ -947,6 +1093,8 @@ private func qualityArtifacts(
 let tests: [(String, () throws -> Void)] = [
     ("RunnerService.parseSummaryLines", testSummaryParsing),
     ("CodegenAgent.run(spec:)", testDeterministicCodegen),
+    ("PlottingAgent histogram parsing", testPlottingAgentHistogramParsing),
+    ("AnalysisPlannerAgent minimum-bias pTHat", testAnalysisPlannerMinimumBiasCutsAndObservables),
     ("RunLineageResolver", testRunLineage),
     ("RunQualityAnalyzer", testRunQualityAnalyzer),
     ("PhysicsReviewerEvidenceBuilder", testPhysicsReviewerInputConstruction),

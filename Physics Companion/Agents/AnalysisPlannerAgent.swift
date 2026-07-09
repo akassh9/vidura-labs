@@ -36,22 +36,27 @@ enum AnalysisPlannerAgent {
         // 3. top_template
         let topTemplate = templates.first?.filename ?? "main101.cc"
 
-        // 4. If top_template == "main101.cc", append pTHatMin = 20
-        if topTemplate == "main101.cc" {
-            cutsSettings.append("PhaseSpace:pTHatMin = 20.")
+        let avoidHardCut = shouldAvoidAutomaticHardCut(intent: intent)
+
+        // 4. If top_template == "main101.cc", append pTHatMin = 20 unless the
+        // request explicitly asks for inclusive/minimum-bias generation.
+        if topTemplate == "main101.cc", !avoidHardCut {
+            appendUnique("PhaseSpace:pTHatMin = 20.", to: &cutsSettings)
         }
 
         // 5. If lowercase joined observables contain "pt", append pTHatMin = 15
+        // unless pT is only a measured observable in an inclusive/minimum-bias request.
         let joinedObs = intent.observables.joined(separator: " ").lowercased()
-        if joinedObs.contains("pt") {
-            cutsSettings.append("PhaseSpace:pTHatMin = 15.")
+        if joinedObs.contains("pt"), !avoidHardCut {
+            appendUnique("PhaseSpace:pTHatMin = 15.", to: &cutsSettings)
         }
 
         // 6. Determine family
         let family = selectFamily(intent: intent, legacyContract: legacyContract)
+        let requestedFamilies = requestedFamilies(intent: intent)
 
         // 7. Build observables
-        let observables = buildObservables(family: family)
+        let observables = buildObservables(family: family, requestedFamilies: requestedFamilies)
 
         // 8-11. Build output artifacts
         var outputArtifacts = ["summary_lines.txt"]
@@ -64,7 +69,7 @@ enum AnalysisPlannerAgent {
             outputArtifacts.append("event_scalars.txt")
         }
 
-        for requestedFamily in requestedFamilies(intent: intent) where requestedFamily != family {
+        for requestedFamily in requestedFamilies where requestedFamily != family {
             switch requestedFamily {
             case .ptSpectrum:
                 appendUnique("hist_pt.txt", to: &outputArtifacts)
@@ -206,77 +211,96 @@ enum AnalysisPlannerAgent {
 
     // MARK: - Build Observables
 
-    private static func buildObservables(family: AnalysisFamily) -> [ObservableSpec] {
+    private static func shouldAvoidAutomaticHardCut(intent: IntentResult) -> Bool {
+        let text = [
+            intent.prompt,
+            intent.processHint,
+            intent.observables.joined(separator: " "),
+            intent.requestedAnalysisCandidates.joined(separator: " ")
+        ]
+        .joined(separator: " ")
+        .lowercased()
+
+        return [
+            "minimum bias",
+            "minimum-bias",
+            "min bias",
+            "min-bias",
+            "minbias",
+            "inclusive"
+        ].contains { text.contains($0) }
+    }
+
+    private static func buildObservables(
+        family: AnalysisFamily,
+        requestedFamilies: [AnalysisFamily] = []
+    ) -> [ObservableSpec] {
         let generatedEvents = ObservableSpec(
             id: "generated_events", kind: "counter", source: "event",
             op: "count", selector: "", outputKeys: ["generated_events"]
         )
 
+        var families = [family]
+        for requestedFamily in requestedFamilies where !families.contains(requestedFamily) {
+            families.append(requestedFamily)
+        }
+
+        var observables: [ObservableSpec] = []
+        for observableFamily in families {
+            observables.append(observable(for: observableFamily))
+        }
+        observables.append(generatedEvents)
+        return observables
+    }
+
+    private static func observable(for family: AnalysisFamily) -> ObservableSpec {
         switch family {
         case .chargedMultiplicity:
-            return [
-                ObservableSpec(
-                    id: "charged_multiplicity", kind: "hist1d", unit: "count",
-                    source: "event", op: "count",
-                    selector: "isFinal && isCharged",
-                    bins: 100, min: -0.5, max: 799.5,
-                    outputKeys: ["mean_charged"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "charged_multiplicity", kind: "hist1d", unit: "count",
+                source: "event", op: "count",
+                selector: "isFinal && isCharged",
+                bins: 100, min: -0.5, max: 799.5,
+                outputKeys: ["mean_charged"]
+            )
         case .ptSpectrum:
-            return [
-                ObservableSpec(
-                    id: "pt_spectrum", kind: "hist1d", unit: "GeV",
-                    source: "particle", op: "pt",
-                    selector: "isFinal && isCharged",
-                    bins: 80, min: 0.0, max: 200.0,
-                    outputKeys: ["mean_pt"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "pt_spectrum", kind: "hist1d", unit: "GeV",
+                source: "particle", op: "pt",
+                selector: "isFinal && isCharged",
+                bins: 80, min: 0.0, max: 200.0,
+                outputKeys: ["mean_pt"]
+            )
         case .etaRapidity:
-            return [
-                ObservableSpec(
-                    id: "eta_distribution", kind: "hist1d",
-                    source: "particle", op: "eta",
-                    selector: "isFinal && isCharged",
-                    bins: 80, min: -8.0, max: 8.0,
-                    outputKeys: ["mean_abs_eta"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "eta_distribution", kind: "hist1d",
+                source: "particle", op: "eta",
+                selector: "isFinal && isCharged",
+                bins: 80, min: -8.0, max: 8.0,
+                outputKeys: ["mean_abs_eta"]
+            )
         case .invariantMass:
-            return [
-                ObservableSpec(
-                    id: "dimuon_mass", kind: "hist1d", unit: "GeV",
-                    source: "pair", op: "invariant_mass",
-                    selector: "isFinal && idAbs==13",
-                    bins: 80, min: 0.0, max: 200.0,
-                    outputKeys: ["dimuon_pairs"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "dimuon_mass", kind: "hist1d", unit: "GeV",
+                source: "pair", op: "invariant_mass",
+                selector: "isFinal && idAbs==13",
+                bins: 80, min: 0.0, max: 200.0,
+                outputKeys: ["dimuon_pairs"]
+            )
         case .pidYields:
-            return [
-                ObservableSpec(
-                    id: "pid_yields", kind: "table",
-                    source: "particle", op: "pid_count",
-                    selector: "isFinal",
-                    outputKeys: ["pid_211", "pid_-211", "pid_321", "pid_-321", "pid_2212"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "pid_yields", kind: "table",
+                source: "particle", op: "pid_count",
+                selector: "isFinal",
+                outputKeys: ["pid_211", "pid_-211", "pid_321", "pid_-321", "pid_2212"]
+            )
         case .eventScalars:
-            return [
-                ObservableSpec(
-                    id: "event_scalars", kind: "summary", unit: "GeV",
-                    source: "event", op: "scalar_sums",
-                    selector: "isFinal && isVisible",
-                    outputKeys: ["mean_visible_energy", "mean_ht"]
-                ),
-                generatedEvents
-            ]
+            return ObservableSpec(
+                id: "event_scalars", kind: "summary", unit: "GeV",
+                source: "event", op: "scalar_sums",
+                selector: "isFinal && isVisible",
+                outputKeys: ["mean_visible_energy", "mean_ht"]
+            )
         }
     }
 }
